@@ -149,7 +149,7 @@ export class MenuScene extends Phaser.Scene {
       ctx.lineTo(GAME_WIDTH * 2, 160);
       ctx.closePath();
       ctx.fill();
-      mCanvas.refresh();
+      tCanvas.refresh();
     }
 
     // Ground
