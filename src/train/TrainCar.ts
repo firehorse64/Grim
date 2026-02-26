@@ -7,7 +7,6 @@ import {
   CAR_INTERIOR_HEIGHT,
   LADDER_WIDTH,
   BARRICADE_SLOTS_PER_CAR,
-  GAME_HEIGHT,
 } from '../data/BalanceConstants';
 
 // ---------------------------------------------------------------

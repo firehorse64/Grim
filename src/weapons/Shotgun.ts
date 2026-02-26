@@ -19,7 +19,8 @@ export class Shotgun extends Weapon {
    */
   private getPelletPool(scene: Phaser.Scene): Phaser.GameObjects.Group {
     if (!this.pelletPool || this.pelletPool.scene !== scene) {
-      const existingPool = (scene as Record<string, unknown>)['pelletPool'] as
+      const sceneAny = scene as unknown as Record<string, unknown>;
+      const existingPool = sceneAny['pelletPool'] as
         | Phaser.GameObjects.Group
         | undefined;
       if (existingPool) {
@@ -30,7 +31,7 @@ export class Shotgun extends Weapon {
           maxSize: 56, // 7 pellets * 8 shots buffered
           runChildUpdate: true,
         });
-        (scene as Record<string, unknown>)['pelletPool'] = this.pelletPool;
+        sceneAny['pelletPool'] = this.pelletPool;
       }
     }
     return this.pelletPool;

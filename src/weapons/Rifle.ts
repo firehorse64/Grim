@@ -4,23 +4,22 @@ import { Weapon } from './Weapon';
 import { Bullet } from '../entities/projectiles/Bullet';
 
 /**
- * Semi-automatic pistol. Unlimited reserve ammo.
- * Creates a single Bullet projectile per shot.
+ * High-powered rifle. Semi-auto, high damage, piercing bullets.
+ * Piercing bullets pass through enemies with reduced damage per hit.
  */
-export class Pistol extends Weapon {
-  /** Object pool group for bullets - managed externally or created here */
+export class Rifle extends Weapon {
   private bulletPool: Phaser.GameObjects.Group | null = null;
 
   constructor() {
-    super(WeaponType.PISTOL);
+    super(WeaponType.RIFLE);
   }
 
   /**
    * Get or create the bullet object pool for this scene.
+   * Shares pool with Pistol/SMG if one already exists.
    */
   private getBulletPool(scene: Phaser.Scene): Phaser.GameObjects.Group {
     if (!this.bulletPool || this.bulletPool.scene !== scene) {
-      // Check if a shared bullet pool exists on the scene
       const sceneAny = scene as unknown as Record<string, unknown>;
       const existingPool = sceneAny['bulletPool'] as
         | Phaser.GameObjects.Group
@@ -50,14 +49,12 @@ export class Pistol extends Weapon {
     const pool = this.getBulletPool(scene);
     const spreadAngle = this.applySpread(angle, stats.spread);
 
-    // Try to get an inactive bullet from pool; otherwise create new
     let bullet = pool.getFirstDead(false) as Bullet | null;
     if (!bullet) {
       if (pool.getLength() < pool.maxSize) {
         bullet = new Bullet(scene, 0, 0);
         pool.add(bullet);
       } else {
-        // Pool is full - reuse the oldest active bullet
         bullet = pool.getFirstAlive(false) as Bullet | null;
         if (!bullet) return;
       }
@@ -69,9 +66,30 @@ export class Pistol extends Weapon {
       spreadAngle,
       stats.bulletSpeed,
       stats.damage,
-      stats.piercing,
+      true, // always piercing for rifle
       stats.knockback,
       owner
     );
+
+    // Rifle shots have a subtle tracer effect
+    const tracer = scene.add.line(
+      0, 0,
+      x, y,
+      x + Math.cos(spreadAngle) * 80,
+      y + Math.sin(spreadAngle) * 80,
+      0xffff88,
+      0.6
+    );
+    tracer.setLineWidth(1.5);
+    tracer.setDepth(14);
+
+    scene.tweens.add({
+      targets: tracer,
+      alpha: 0,
+      duration: 80,
+      onComplete: () => {
+        tracer.destroy();
+      },
+    });
   }
 }

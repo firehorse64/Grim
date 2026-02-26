@@ -20,7 +20,8 @@ export class SMG extends Weapon {
    */
   private getBulletPool(scene: Phaser.Scene): Phaser.GameObjects.Group {
     if (!this.bulletPool || this.bulletPool.scene !== scene) {
-      const existingPool = (scene as Record<string, unknown>)['bulletPool'] as
+      const sceneAny = scene as unknown as Record<string, unknown>;
+      const existingPool = sceneAny['bulletPool'] as
         | Phaser.GameObjects.Group
         | undefined;
       if (existingPool) {
@@ -35,7 +36,7 @@ export class SMG extends Weapon {
           maxSize: 60,
           runChildUpdate: true,
         });
-        (scene as Record<string, unknown>)['bulletPool'] = this.bulletPool;
+        sceneAny['bulletPool'] = this.bulletPool;
       }
     }
     return this.bulletPool;
