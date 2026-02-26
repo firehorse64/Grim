@@ -1,0 +1,25 @@
+{
+  "name": "grim-zombie-train",
+  "version": "1.0.0",
+  "description": "Zombie Train Survival - A Phaser 3 side-scrolling survival game on a moving train",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:51438/git/firehorse64/Grim"
+  },
+  "keywords": ["game", "phaser", "zombie", "survival"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
