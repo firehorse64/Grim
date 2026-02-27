@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { EventBus } from '../utils/EventBus';
 import { GameEvents } from '../types/EventTypes';
 import { GAME_WIDTH, GAME_HEIGHT } from '../data/BalanceConstants';
+import { isMobileDevice } from '../systems/TouchDetect';
 
 /**
  * GameOverScene - Displayed when the player dies.
@@ -298,9 +299,10 @@ export class GameOverScene extends Phaser.Scene {
 
   private createRestartPrompt(): void {
     const y = this.isNewHighScore ? 460 : 420;
-    this.restartPrompt = this.add.text(GAME_WIDTH / 2, y, 'PRESS  R  TO  RESTART', {
+    const promptText = isMobileDevice() ? 'TAP  TO  RESTART' : 'PRESS  R  TO  RESTART';
+    this.restartPrompt = this.add.text(GAME_WIDTH / 2, y, promptText, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '18px',
+      fontSize: isMobileDevice() ? '22px' : '18px',
       color: '#888899',
       fontStyle: 'bold',
     })
@@ -331,23 +333,26 @@ export class GameOverScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private createMenuButton(): void {
+    const mobile = isMobileDevice();
     const y = this.isNewHighScore ? 520 : 480;
+    const btnW = mobile ? 280 : 220;
+    const btnH = mobile ? 48 : 38;
     this.menuButton = this.add.container(GAME_WIDTH / 2, y).setDepth(10).setAlpha(0);
 
-    const bg = this.add.rectangle(0, 0, 220, 38, 0x111122, 0.8)
+    const bg = this.add.rectangle(0, 0, btnW, btnH, 0x111122, 0.8)
       .setStrokeStyle(1, 0x444466);
 
     const text = this.add.text(0, 0, 'RETURN TO MENU', {
       fontFamily: '"Courier New", monospace',
-      fontSize: '15px',
+      fontSize: mobile ? '18px' : '15px',
       color: '#888899',
       fontStyle: 'bold',
     }).setOrigin(0.5, 0.5);
 
     this.menuButton.add([bg, text]);
-    this.menuButton.setSize(220, 38);
+    this.menuButton.setSize(btnW, btnH);
     this.menuButton.setInteractive(
-      new Phaser.Geom.Rectangle(-110, -19, 220, 38),
+      new Phaser.Geom.Rectangle(-btnW / 2, -btnH / 2, btnW, btnH),
       Phaser.Geom.Rectangle.Contains
     );
 
@@ -406,6 +411,7 @@ export class GameOverScene extends Phaser.Scene {
   private restartGame(): void {
     // Stop all overlays
     this.scene.stop('HudScene');
+    this.scene.stop('TouchControlsScene');
     this.scene.stop('GameScene');
     this.scene.stop();
 
@@ -415,6 +421,7 @@ export class GameOverScene extends Phaser.Scene {
 
   private returnToMenu(): void {
     this.scene.stop('HudScene');
+    this.scene.stop('TouchControlsScene');
     this.scene.stop('GameScene');
     this.scene.stop();
 

@@ -1,0 +1,12 @@
+{
+  "name": "Grim Line - Zombie Train Survival",
+  "short_name": "Grim Line",
+  "description": "Defend the train against waves of undead in this side-scrolling survival shooter",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0a0a1a",
+  "theme_color": "#0a0a1a",
+  "categories": ["games", "entertainment"],
+  "icons": []
+}

@@ -1,17 +1,14 @@
 import Phaser from 'phaser';
 import { InputState } from '../types/GameTypes';
+import { TouchState, TouchControlsScene } from '../scenes/TouchControlsScene';
+import { isMobileDevice } from './TouchDetect';
 
 /**
- * Wraps Phaser's keyboard and pointer input into a single InputState
- * snapshot that is recalculated every frame. Any system or entity can
- * read `InputManager.state` without coupling directly to Phaser input
- * objects.
+ * Wraps Phaser's keyboard/pointer AND virtual touch input into a single
+ * InputState snapshot that is recalculated every frame.
  *
- * Usage:
- *   const input = new InputManager();
- *   input.init(scene);          // call once in scene create()
- *   input.update();             // call every frame in scene update()
- *   const s = input.state;      // read-only snapshot
+ * On mobile devices, merges the TouchControlsScene's virtual joystick
+ * and buttons with any connected keyboard/mouse.
  */
 export class InputManager {
   // ----------------------------------------------------------------
@@ -43,10 +40,7 @@ export class InputManager {
   private slotKeys: Phaser.Input.Keyboard.Key[] = [];
 
   // ----------------------------------------------------------------
-  // Helpers for "just pressed" tracking on specific keys so we can
-  // convert Phaser's continuous isDown into single-fire triggers
-  // where appropriate (pause, interact, grenade, barricade, reload,
-  // weapon switch).
+  // Edge detection helpers
   // ----------------------------------------------------------------
   private prevPause = false;
   private prevInteract = false;
@@ -57,12 +51,19 @@ export class InputManager {
   private prevJump = false;
 
   // ----------------------------------------------------------------
+  // Touch controls reference
+  // ----------------------------------------------------------------
+  private touchScene: TouchControlsScene | null = null;
+  private isMobile: boolean = false;
+
+  // ----------------------------------------------------------------
   // Public API
   // ----------------------------------------------------------------
 
   /** Bind to a Phaser scene. Call once during scene create(). */
   public init(scene: Phaser.Scene): void {
     this.scene = scene;
+    this.isMobile = isMobileDevice();
 
     const kb = scene.input.keyboard!;
 
@@ -91,6 +92,11 @@ export class InputManager {
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE),
     ];
+
+    // Get reference to TouchControlsScene if it's running
+    if (this.isMobile) {
+      this.touchScene = scene.scene.get('TouchControlsScene') as TouchControlsScene;
+    }
   }
 
   /**
@@ -100,7 +106,7 @@ export class InputManager {
   public update(): void {
     const pointer = this.scene.input.activePointer;
 
-    // ---- Movement axes ----
+    // ---- Keyboard: Movement axes ----
     let moveX = 0;
     let moveY = 0;
 
@@ -110,18 +116,17 @@ export class InputManager {
     if (this.keyS.isDown || this.cursorKeys.down.isDown) moveY += 1;
 
     // ---- Aim (world-space mouse position) ----
-    const aimX = pointer.worldX;
-    const aimY = pointer.worldY;
-
-    // We don't compute aimAngle here because it depends on the player
-    // position. Instead we store 0 and let the consumer derive it.
-    // However for convenience we can default to pointing right.
+    let aimX = pointer.worldX;
+    let aimY = pointer.worldY;
     const aimAngle = 0;
 
-    // ---- Shooting (mouse button held) ----
-    const shooting = pointer.isDown;
+    // ---- Shooting (mouse button held, only on non-mobile or if not touching joystick area) ----
+    let shooting = false;
+    if (!this.isMobile) {
+      shooting = pointer.isDown;
+    }
 
-    // ---- "Just pressed" actions (fire on press edge, not hold) ----
+    // ---- "Just pressed" actions ----
     const curJump = this.keySpace.isDown;
     const curReload = this.keyR.isDown;
     const curInteract = this.keyE.isDown;
@@ -129,26 +134,48 @@ export class InputManager {
     const curBarricade = this.keyB.isDown;
     const curPause = this.keyEsc.isDown;
 
-    const jumping = curJump && !this.prevJump;
-    const reloading = curReload && !this.prevReload;
-    const interact = curInteract && !this.prevInteract;
-    const grenade = curGrenade && !this.prevGrenade;
+    let jumping = curJump && !this.prevJump;
+    let reloading = curReload && !this.prevReload;
+    let interact = curInteract && !this.prevInteract;
+    let grenade = curGrenade && !this.prevGrenade;
     const barricade = curBarricade && !this.prevBarricade;
-    const pause = curPause && !this.prevPause;
+    let pause = curPause && !this.prevPause;
 
     // ---- Weapon slot (just pressed) ----
-    let weaponSlot = -1; // -1 = no switch requested
+    let weaponSlot = -1;
     for (let i = 0; i < this.slotKeys.length; i++) {
       const cur = this.slotKeys[i].isDown;
       if (cur && !this.prevSlots[i]) {
-        weaponSlot = i + 1; // slots are 1-based
+        weaponSlot = i + 1;
       }
       this.prevSlots[i] = cur;
     }
 
-    // ---- Climb (continuous hold is fine) ----
-    const climbUp = this.keyW.isDown || this.cursorKeys.up.isDown;
-    const climbDown = this.keyS.isDown || this.cursorKeys.down.isDown;
+    // ---- Climb ----
+    let climbUp = this.keyW.isDown || this.cursorKeys.up.isDown;
+    let climbDown = this.keyS.isDown || this.cursorKeys.down.isDown;
+
+    // ---- Merge touch input ----
+    if (this.isMobile && this.touchScene?.visible) {
+      const ts = this.touchScene.touchState;
+
+      // Joystick overrides keyboard movement (OR'd together)
+      if (ts.moveX !== 0) moveX = ts.moveX;
+      if (ts.moveY !== 0) moveY = ts.moveY;
+
+      // Buttons (OR with keyboard)
+      shooting = shooting || ts.shooting;
+      jumping = jumping || ts.jumping;
+      reloading = reloading || ts.reloading;
+      interact = interact || ts.interact;
+      grenade = grenade || ts.grenade;
+      pause = pause || ts.pause;
+
+      if (ts.weaponSlot !== -1) weaponSlot = ts.weaponSlot;
+
+      climbUp = climbUp || ts.climbUp;
+      climbDown = climbDown || ts.climbDown;
+    }
 
     // ---- Commit snapshot ----
     this.state = {
@@ -169,7 +196,7 @@ export class InputManager {
       climbDown,
     };
 
-    // ---- Save previous-frame state for edge detection ----
+    // ---- Save previous-frame state ----
     this.prevJump = curJump;
     this.prevReload = curReload;
     this.prevInteract = curInteract;
@@ -182,9 +209,6 @@ export class InputManager {
   // Utility
   // ----------------------------------------------------------------
 
-  /**
-   * Returns a neutral InputState where nothing is pressed.
-   */
   public static emptyState(): InputState {
     return {
       moveX: 0,
@@ -205,25 +229,15 @@ export class InputManager {
     };
   }
 
-  /**
-   * Temporarily disable all keyboard capture (useful when opening
-   * text inputs or overlays).
-   */
   public disable(): void {
     this.scene.input.keyboard?.disableGlobalCapture();
     this.state = InputManager.emptyState();
   }
 
-  /**
-   * Re-enable keyboard capture after a disable() call.
-   */
   public enable(): void {
     this.scene.input.keyboard?.enableGlobalCapture();
   }
 
-  /**
-   * Clean up all keys. Call in scene shutdown.
-   */
   public destroy(): void {
     this.scene.input.keyboard?.removeAllKeys(true);
     this.slotKeys = [];

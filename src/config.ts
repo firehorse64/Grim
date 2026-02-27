@@ -9,6 +9,7 @@ import { HudScene } from './scenes/HudScene';
 import { ShopScene } from './scenes/ShopScene';
 import { PauseScene } from './scenes/PauseScene';
 import { GameOverScene } from './scenes/GameOverScene';
+import { TouchControlsScene } from './scenes/TouchControlsScene';
 
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -36,6 +37,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     ShopScene,
     PauseScene,
     GameOverScene,
+    TouchControlsScene,
   ],
   render: {
     antialias: false,
@@ -45,5 +47,6 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   input: {
     keyboard: true,
     mouse: true,
+    touch: true,
   },
 };

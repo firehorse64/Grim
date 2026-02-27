@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, TRAIN_SCROLL_SPEED } from '../data/BalanceConstants';
 import { SAVE_KEY } from '../types/SaveTypes';
 import { EventBus } from '../utils/EventBus';
+import { isMobileDevice } from '../systems/TouchDetect';
 
 /**
  * MenuScene - Title screen with dark, atmospheric aesthetic.
@@ -425,7 +426,10 @@ export class MenuScene extends Phaser.Scene {
 
   private createButtons(): void {
     const centerX = GAME_WIDTH / 2;
-    let startY = 320;
+    const mobile = isMobileDevice();
+    const btnW = mobile ? 300 : 260;
+    const btnH = mobile ? 52 : 44;
+    let startY = mobile ? 300 : 320;
 
     const buttonDefs: { label: string; action: () => void; enabled: boolean }[] = [
       { label: 'NEW GAME', action: () => this.startNewGame(), enabled: true },
@@ -435,29 +439,29 @@ export class MenuScene extends Phaser.Scene {
 
     for (let i = 0; i < buttonDefs.length; i++) {
       const def = buttonDefs[i];
-      const y = startY + i * 60;
+      const y = startY + i * (btnH + 14);
 
       const container = this.add.container(centerX, y).setDepth(110);
 
       // Background rectangle
-      const bg = this.add.rectangle(0, 0, 260, 44, 0x111122, 0.7)
+      const bg = this.add.rectangle(0, 0, btnW, btnH, 0x111122, 0.7)
         .setStrokeStyle(1, 0x444466);
 
       // Text
       const textColor = def.enabled ? '#ccccdd' : '#444455';
       const text = this.add.text(0, 0, def.label, {
         fontFamily: '"Courier New", monospace',
-        fontSize: '20px',
+        fontSize: mobile ? '22px' : '20px',
         color: textColor,
         fontStyle: 'bold',
       }).setOrigin(0.5, 0.5);
 
       container.add([bg, text]);
-      container.setSize(260, 44);
+      container.setSize(btnW, btnH);
 
       if (def.enabled) {
         container.setInteractive(
-          new Phaser.Geom.Rectangle(-130, -22, 260, 44),
+          new Phaser.Geom.Rectangle(-btnW / 2, -btnH / 2, btnW, btnH),
           Phaser.Geom.Rectangle.Contains
         );
 

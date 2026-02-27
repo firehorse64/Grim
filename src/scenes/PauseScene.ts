@@ -3,6 +3,7 @@ import { EventBus } from '../utils/EventBus';
 import { GameEvents } from '../types/EventTypes';
 import { SAVE_KEY } from '../types/SaveTypes';
 import { GAME_WIDTH, GAME_HEIGHT } from '../data/BalanceConstants';
+import { isMobileDevice } from '../systems/TouchDetect';
 
 /**
  * PauseScene - Overlay displayed when the game is paused.
@@ -89,6 +90,9 @@ export class PauseScene extends Phaser.Scene {
   private createButtons(): void {
     const centerX = GAME_WIDTH / 2;
     const startY = GAME_HEIGHT / 2 - 20;
+    const mobile = isMobileDevice();
+    const btnW = mobile ? 300 : 240;
+    const btnH = mobile ? 52 : 42;
 
     const buttonDefs: { label: string; action: () => void }[] = [
       { label: 'RESUME', action: () => this.resumeGame() },
@@ -98,24 +102,24 @@ export class PauseScene extends Phaser.Scene {
 
     for (let i = 0; i < buttonDefs.length; i++) {
       const def = buttonDefs[i];
-      const y = startY + i * 56;
+      const y = startY + i * (btnH + 14);
 
       const container = this.add.container(centerX, y).setDepth(10);
 
-      const bg = this.add.rectangle(0, 0, 240, 42, 0x111122, 0.8)
+      const bg = this.add.rectangle(0, 0, btnW, btnH, 0x111122, 0.8)
         .setStrokeStyle(1, 0x444466);
 
       const text = this.add.text(0, 0, def.label, {
         fontFamily: '"Courier New", monospace',
-        fontSize: '18px',
+        fontSize: mobile ? '20px' : '18px',
         color: '#ccccdd',
         fontStyle: 'bold',
       }).setOrigin(0.5, 0.5);
 
       container.add([bg, text]);
-      container.setSize(240, 42);
+      container.setSize(btnW, btnH);
       container.setInteractive(
-        new Phaser.Geom.Rectangle(-120, -21, 240, 42),
+        new Phaser.Geom.Rectangle(-btnW / 2, -btnH / 2, btnW, btnH),
         Phaser.Geom.Rectangle.Contains
       );
 
@@ -237,9 +241,10 @@ export class PauseScene extends Phaser.Scene {
       gameScene.saveGame();
     }
 
-    // Stop game and HUD scenes
+    // Stop game, HUD, and touch controls scenes
     this.scene.stop('GameScene');
     this.scene.stop('HudScene');
+    this.scene.stop('TouchControlsScene');
     this.scene.stop();
 
     // Go to menu

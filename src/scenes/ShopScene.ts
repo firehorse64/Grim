@@ -6,6 +6,7 @@ import { WeaponType } from '../types/WeaponTypes';
 import { WEAPON_DATA } from '../data/WeaponData';
 import { UPGRADES } from '../data/UpgradeData';
 import { GAME_WIDTH, GAME_HEIGHT } from '../data/BalanceConstants';
+import { isMobileDevice } from '../systems/TouchDetect';
 
 /**
  * ShopScene - Between-wave upgrade shop.
@@ -169,15 +170,17 @@ export class ShopScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private createTabs(): void {
-    const tabWidth = 130;
-    const tabHeight = 32;
-    const totalW = ShopScene.TABS.length * (tabWidth + 8);
+    const mobile = isMobileDevice();
+    const tabWidth = mobile ? 140 : 130;
+    const tabHeight = mobile ? 38 : 32;
+    const tabGap = mobile ? 6 : 8;
+    const totalW = ShopScene.TABS.length * (tabWidth + tabGap);
     const startX = (GAME_WIDTH - totalW) / 2 + tabWidth / 2;
     const y = 72;
 
     for (let i = 0; i < ShopScene.TABS.length; i++) {
       const tabName = ShopScene.TABS[i];
-      const x = startX + i * (tabWidth + 8);
+      const x = startX + i * (tabWidth + tabGap);
 
       const container = this.add.container(x, y).setDepth(10);
 
@@ -268,7 +271,6 @@ export class ShopScene extends Phaser.Scene {
     let items: ShopItem[];
 
     if (this.currentTab === 'WEAPONS') {
-      // Show weapon unlocks/ammo + weapon upgrades
       items = this.shopItems.filter(
         item => item.category === 'consumable' || item.category === UpgradeCategory.WEAPON
       );
@@ -276,11 +278,12 @@ export class ShopScene extends Phaser.Scene {
       items = this.shopItems.filter(item => item.category === category);
     }
 
-    const cardWidth = 280;
-    const cardHeight = 80;
-    const cols = 2;
-    const padX = 40;
-    const padY = 12;
+    const mobile = isMobileDevice();
+    const cardWidth = mobile ? 560 : 280;
+    const cardHeight = mobile ? 72 : 80;
+    const cols = mobile ? 1 : 2;
+    const padX = mobile ? 0 : 40;
+    const padY = mobile ? 8 : 12;
     const startX = (GAME_WIDTH - (cols * cardWidth + (cols - 1) * padX)) / 2;
     const startY = 110;
 
@@ -352,8 +355,9 @@ export class ShopScene extends Phaser.Scene {
     }).setOrigin(1, 0);
 
     // Buy button
-    const btnW = 60;
-    const btnH = 24;
+    const mobile = isMobileDevice();
+    const btnW = mobile ? 80 : 60;
+    const btnH = mobile ? 32 : 24;
     const btnX = w / 2 - 12 - btnW / 2;
     const btnY = h / 2 - 14;
     const btnBgColor = canAfford ? 0x224422 : 0x1a1a22;
@@ -615,23 +619,26 @@ export class ShopScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private createReadyButton(): void {
-    const y = GAME_HEIGHT - 44;
+    const mobile = isMobileDevice();
+    const y = GAME_HEIGHT - (mobile ? 50 : 44);
+    const w = mobile ? 280 : 200;
+    const h = mobile ? 50 : 40;
     this.readyButton = this.add.container(GAME_WIDTH / 2, y).setDepth(20);
 
-    const bg = this.add.rectangle(0, 0, 200, 40, 0x224422, 0.9)
+    const bg = this.add.rectangle(0, 0, w, h, 0x224422, 0.9)
       .setStrokeStyle(2, 0x44aa44);
 
     const text = this.add.text(0, 0, 'READY', {
       fontFamily: '"Impact", "Arial Black", sans-serif',
-      fontSize: '22px',
+      fontSize: mobile ? '26px' : '22px',
       color: '#44dd44',
       fontStyle: 'bold',
     }).setOrigin(0.5, 0.5);
 
     this.readyButton.add([bg, text]);
-    this.readyButton.setSize(200, 40);
+    this.readyButton.setSize(w, h);
     this.readyButton.setInteractive(
-      new Phaser.Geom.Rectangle(-100, -20, 200, 40),
+      new Phaser.Geom.Rectangle(-w / 2, -h / 2, w, h),
       Phaser.Geom.Rectangle.Contains
     );
 

@@ -63,6 +63,9 @@ export const GameEvents = {
   SHOW_DIALOG: 'show-dialog',
   SCREEN_SHAKE: 'screen-shake',
   SCREEN_FLASH: 'screen-flash',
+
+  // Mobile touch events
+  WEAPON_SWITCH_REQUEST: 'weapon-switch-request',
 } as const;
 
 export interface EnvironmentEvent {

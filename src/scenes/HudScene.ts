@@ -7,6 +7,7 @@ import { GAME_WIDTH, GAME_HEIGHT, NUM_TRAIN_CARS } from '../data/BalanceConstant
 import { HealthBar } from '../ui/HealthBar';
 import { DamageNumbers } from '../ui/DamageNumbers';
 import { clamp } from '../utils/MathUtils';
+import { isMobileDevice } from '../systems/TouchDetect';
 
 /**
  * HudScene - Heads-up display overlay running in parallel with GameScene.
@@ -144,18 +145,23 @@ export class HudScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private createAmmoDisplay(): void {
-    this.weaponNameText = this.add.text(16, GAME_HEIGHT - 60, this.cachedWeaponName, {
+    const mobile = isMobileDevice();
+    // On mobile, move ammo info higher to avoid touch controls area
+    const ammoY = mobile ? GAME_HEIGHT - 130 : GAME_HEIGHT - 60;
+    const clipY = mobile ? GAME_HEIGHT - 110 : GAME_HEIGHT - 40;
+
+    this.weaponNameText = this.add.text(16, ammoY, this.cachedWeaponName, {
       fontFamily: '"Courier New", monospace',
-      fontSize: '14px',
+      fontSize: mobile ? '12px' : '14px',
       color: '#8888aa',
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 2,
     }).setOrigin(0, 0).setDepth(1001);
 
-    this.ammoText = this.add.text(16, GAME_HEIGHT - 40, this.formatAmmo(), {
+    this.ammoText = this.add.text(16, clipY, this.formatAmmo(), {
       fontFamily: '"Courier New", monospace',
-      fontSize: '22px',
+      fontSize: mobile ? '18px' : '22px',
       color: '#ccccee',
       fontStyle: 'bold',
       stroke: '#000000',
@@ -243,6 +249,7 @@ export class HudScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private createWeaponSlots(): void {
+    const mobile = isMobileDevice();
     const weapons = [
       { key: '1', name: 'Pistol', type: WeaponType.PISTOL },
       { key: '2', name: 'Shotgun', type: WeaponType.SHOTGUN },
@@ -251,11 +258,12 @@ export class HudScene extends Phaser.Scene {
       { key: '5', name: 'Grenades', type: WeaponType.GRENADE },
     ];
 
-    const slotSize = 48;
-    const gap = 6;
+    const slotSize = mobile ? 38 : 48;
+    const gap = mobile ? 4 : 6;
     const totalWidth = weapons.length * slotSize + (weapons.length - 1) * gap;
     const startX = (GAME_WIDTH - totalWidth) / 2;
-    const y = GAME_HEIGHT - 60;
+    // On mobile, move weapon slots higher to avoid overlap with touch controls
+    const y = mobile ? GAME_HEIGHT - 100 : GAME_HEIGHT - 60;
 
     for (let i = 0; i < weapons.length; i++) {
       const x = startX + i * (slotSize + gap) + slotSize / 2;
@@ -266,18 +274,19 @@ export class HudScene extends Phaser.Scene {
       const bg = this.add.rectangle(0, 0, slotSize, slotSize, 0x111122, 0.7)
         .setStrokeStyle(1, 0x333355);
 
-      // Key number
+      // Key number (hidden on mobile - no keyboard)
       const keyText = this.add.text(-slotSize / 2 + 4, -slotSize / 2 + 2, weapons[i].key, {
         fontFamily: '"Courier New", monospace',
         fontSize: '10px',
         color: '#666688',
       });
+      if (mobile) keyText.setVisible(false);
 
       // Weapon abbreviation
       const nameAbbr = weapons[i].name.substring(0, 3).toUpperCase();
-      const nameText = this.add.text(0, 4, nameAbbr, {
+      const nameText = this.add.text(0, mobile ? 0 : 4, nameAbbr, {
         fontFamily: '"Courier New", monospace',
-        fontSize: '12px',
+        fontSize: mobile ? '10px' : '12px',
         color: '#888899',
         fontStyle: 'bold',
       }).setOrigin(0.5, 0.5);
@@ -285,6 +294,19 @@ export class HudScene extends Phaser.Scene {
       container.add([bg, keyText, nameText]);
       container.setData('bg', bg);
       container.setData('nameText', nameText);
+
+      // On mobile, make weapon slots tappable to switch weapons
+      if (mobile) {
+        container.setSize(slotSize, slotSize);
+        container.setInteractive(
+          new Phaser.Geom.Rectangle(-slotSize / 2, -slotSize / 2, slotSize, slotSize),
+          Phaser.Geom.Rectangle.Contains
+        );
+        container.on('pointerdown', () => {
+          EventBus.emit(GameEvents.WEAPON_SWITCH_REQUEST, { slot: i + 1 });
+        });
+      }
+
       this.weaponSlots.push(container);
     }
 
@@ -432,6 +454,14 @@ export class HudScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private createMinimap(): void {
+    // Hide minimap on mobile to avoid cluttering the touch controls area
+    if (isMobileDevice()) {
+      this.showMinimap = false;
+      this.minimapBorder = this.add.graphics().setDepth(1001).setVisible(false);
+      this.minimapGraphics = this.add.graphics().setDepth(1002).setVisible(false);
+      return;
+    }
+
     const mmX = GAME_WIDTH - 130;
     const mmY = 90;
     const mmW = 114;

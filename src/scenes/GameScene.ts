@@ -143,6 +143,13 @@ export class GameScene extends Phaser.Scene {
     }
 
     // ---------------------------------------------------------------
+    // 12b. Launch touch controls (mobile only, auto-detects)
+    // ---------------------------------------------------------------
+    if (!this.scene.isActive('TouchControlsScene')) {
+      this.scene.launch('TouchControlsScene');
+    }
+
+    // ---------------------------------------------------------------
     // Event listeners
     // ---------------------------------------------------------------
     this.registerEvents();

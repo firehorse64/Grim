@@ -2,26 +2,86 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Zombie Train - Survival</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <!-- Mobile web app -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Grim Line">
+  <meta name="theme-color" content="#0a0a1a">
+  <meta name="description" content="Zombie Train Survival - Defend the train against waves of undead">
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="/manifest.json">
+
+  <title>Grim Line - Zombie Train Survival</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
+    html, body {
       background: #000;
       overflow: hidden;
+      width: 100%;
+      height: 100%;
+      /* Prevent pull-to-refresh and overscroll on mobile */
+      overscroll-behavior: none;
+      touch-action: none;
+      /* iOS safe area support */
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    body {
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
       font-family: 'Courier New', monospace;
+      /* Use dvh for mobile browsers that have dynamic toolbars */
+      height: 100dvh;
     }
     #game-container {
       width: 100%;
       height: 100%;
+      /* Prevent text selection on mobile */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    /* Landscape orientation hint for portrait users */
+    #rotate-hint {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.95);
+      z-index: 99999;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      color: #888;
+      font-family: 'Courier New', monospace;
+      font-size: 18px;
+      text-align: center;
+      padding: 20px;
+    }
+    #rotate-hint .icon {
+      font-size: 48px;
+      margin-bottom: 20px;
+      animation: rotate-phone 2s ease-in-out infinite;
+    }
+    @keyframes rotate-phone {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(90deg); }
+    }
+    /* Show rotate hint only on mobile portrait */
+    @media (max-aspect-ratio: 1/1) and (hover: none) and (pointer: coarse) {
+      #rotate-hint { display: flex; }
+      #game-container { display: none; }
     }
   </style>
 </head>
 <body>
+  <div id="rotate-hint">
+    <div class="icon">&#x1F4F1;</div>
+    <div>Rotate your device to<br><strong style="color:#cc4444">LANDSCAPE</strong><br>for the best experience</div>
+  </div>
   <div id="game-container"></div>
   <script type="module" src="/src/main.ts"></script>
 </body>
