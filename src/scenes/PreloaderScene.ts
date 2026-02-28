@@ -105,11 +105,11 @@ export class PreloaderScene extends Phaser.Scene {
     const statusMessages = [
       'Initializing systems...',
       'Loading train configuration...',
-      'Preparing weapons cache...',
-      'Spawning zombie hordes...',
-      'Building barricades...',
-      'Scanning wasteland...',
-      'Calibrating crosshair...',
+      'Stocking supply crates...',
+      'Scanning the wasteland...',
+      'Boarding up windows...',
+      'Checking fuel levels...',
+      'Lighting the stove...',
       'Ready.',
     ];
 

@@ -1,380 +1,384 @@
 import Phaser from 'phaser';
 import {
-  CAR_WIDTH,
-  CAR_FLOOR_Y,
-  CAR_ROOF_Y,
-  CAR_ROOF_WALK_Y,
-  CAR_INTERIOR_HEIGHT,
-  LADDER_WIDTH,
-  BARRICADE_SLOTS_PER_CAR,
+  TILE_SIZE,
+  CAR_TILE_WIDTH,
+  CAR_TILE_HEIGHT,
+  CAR_PIXEL_WIDTH,
+  CAR_PIXEL_HEIGHT,
+  WALL_VISUAL_HEIGHT,
 } from '../data/BalanceConstants';
+import { TileType, CarPurpose, CarLayout, PlacedFurniture, FurnitureType } from '../types/TrainTypes';
 
-// ---------------------------------------------------------------
-// BarricadeSlot – a position where the player may place a barricade
-// ---------------------------------------------------------------
-export interface BarricadeSlot {
-  /** Index within this car (0-based). */
-  index: number;
-  /** World-x centre of the slot. */
-  worldX: number;
-  /** World-y (sits on the floor). */
-  worldY: number;
-  /** Whether a barricade is currently placed here. */
-  occupied: boolean;
-  /** Visual indicator sprite (the "slot" marker). */
-  marker: Phaser.GameObjects.Rectangle;
-}
-
-// ---------------------------------------------------------------
-// TrainCar – one self-contained carriage
-// ---------------------------------------------------------------
+/**
+ * A single train car rendered from 3/4 angle.
+ * The car is oriented vertically: y=0 is the far (back) wall,
+ * y=max is the near (front) wall closest to camera.
+ * Doors at top-center (to previous car) and bottom-center (to next car).
+ */
 export class TrainCar {
-  public readonly carIndex: number;
-  /** Left edge x-position in world coords. */
-  public worldX: number;
-  public readonly width: number = CAR_WIDTH;
-  public barricadeSlots: BarricadeSlot[] = [];
-  public isAccessible: boolean = true;
+  public readonly index: number;
+  public readonly purpose: CarPurpose;
+  public readonly layout: CarLayout;
 
-  // Visual containers
-  public container!: Phaser.GameObjects.Container;
-  private interiorContainer!: Phaser.GameObjects.Container;
-  private rooftopContainer!: Phaser.GameObjects.Container;
+  // World position of this car's top-left corner
+  public worldX: number = 0;
+  public worldY: number = 0;
 
-  // Individual visual pieces we keep references to for tint / animation
-  private windows: Phaser.GameObjects.Image[] = [];
-  private windowGlows: Phaser.GameObjects.Rectangle[] = [];
-  private ladderLeft!: Phaser.GameObjects.Image;
-  private ladderRight!: Phaser.GameObjects.Image;
+  // Phaser containers
+  public floorContainer!: Phaser.GameObjects.Container;
+  public wallContainer!: Phaser.GameObjects.Container;
+  public furnitureContainer!: Phaser.GameObjects.Container;
+  public frontWallContainer!: Phaser.GameObjects.Container;
 
-  // Collision bodies exposed for the physics layer
-  public floorBody!: Phaser.GameObjects.Rectangle;
-  public roofBody!: Phaser.GameObjects.Rectangle;
-  public leftWall!: Phaser.GameObjects.Rectangle;
-  public rightWall!: Phaser.GameObjects.Rectangle;
+  // Physics bodies for walls (static group)
+  public wallBodies: Phaser.Physics.Arcade.StaticGroup | null = null;
+  public furnitureBodies: Phaser.Physics.Arcade.StaticGroup | null = null;
 
-  constructor(carIndex: number, worldX: number) {
-    this.carIndex = carIndex;
-    this.worldX = worldX;
+  constructor(index: number, purpose: CarPurpose) {
+    this.index = index;
+    this.purpose = purpose;
+    this.layout = TrainCar.generateLayout(purpose);
   }
 
-  // ------------------------------------------------------------------
-  // Factory
-  // ------------------------------------------------------------------
+  /** Generate the tile layout for a given car purpose. */
+  private static generateLayout(purpose: CarPurpose): CarLayout {
+    const tiles: TileType[][] = [];
 
-  public create(scene: Phaser.Scene): void {
-    this.container = scene.add.container(this.worldX, 0);
-    this.interiorContainer = scene.add.container(0, 0);
-    this.rooftopContainer = scene.add.container(0, 0);
-
-    this.buildExteriorShell(scene);
-    this.buildInterior(scene);
-    this.buildRooftop(scene);
-    this.buildLadders(scene);
-    this.buildBarricadeSlots(scene);
-    this.buildZombieEntryMarkers(scene);
-
-    this.container.add(this.interiorContainer);
-    this.container.add(this.rooftopContainer);
-  }
-
-  // ------------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------------
-
-  /** Y of the interior floor in world space. */
-  public getFloorY(): number {
-    return CAR_FLOOR_Y;
-  }
-
-  /** Y of the rooftop walking surface in world space. */
-  public getRoofY(): number {
-    return CAR_ROOF_WALK_Y;
-  }
-
-  /** Whether world-x coordinate falls within this car's horizontal bounds. */
-  public containsX(x: number): boolean {
-    return x >= this.worldX && x <= this.worldX + this.width;
-  }
-
-  /** Centre of this car in world x. */
-  public getCenterX(): number {
-    return this.worldX + this.width * 0.5;
-  }
-
-  // ------------------------------------------------------------------
-  // Build methods (private)
-  // ------------------------------------------------------------------
-
-  private buildExteriorShell(scene: Phaser.Scene): void {
-    const wallThickness = 8;
-    const carRight = this.width;
-
-    // --- Floor ---
-    const floor = scene.add.image(this.width * 0.5, CAR_FLOOR_Y, 'train-floor');
-    floor.setDisplaySize(this.width, 12);
-    floor.setTint(0x3a3530);
-    this.container.add(floor);
-
-    // Physics-friendly floor rectangle (invisible, used for collisions)
-    this.floorBody = scene.add.rectangle(
-      this.width * 0.5,
-      CAR_FLOOR_Y,
-      this.width,
-      12,
-      0x000000,
-      0,
-    );
-    this.container.add(this.floorBody);
-
-    // --- Ceiling ---
-    const ceiling = scene.add.image(this.width * 0.5, CAR_ROOF_Y, 'train-roof');
-    ceiling.setDisplaySize(this.width, 10);
-    ceiling.setTint(0x2e2a26);
-    this.container.add(ceiling);
-
-    // --- Walls ---
-    // Left wall
-    const leftWall = scene.add.image(
-      wallThickness * 0.5,
-      CAR_ROOF_Y + CAR_INTERIOR_HEIGHT * 0.5,
-      'train-wall',
-    );
-    leftWall.setDisplaySize(wallThickness, CAR_INTERIOR_HEIGHT);
-    leftWall.setTint(0x4a4440);
-    this.container.add(leftWall);
-
-    this.leftWall = scene.add.rectangle(
-      wallThickness * 0.5,
-      CAR_ROOF_Y + CAR_INTERIOR_HEIGHT * 0.5,
-      wallThickness,
-      CAR_INTERIOR_HEIGHT,
-      0x000000,
-      0,
-    );
-    this.container.add(this.leftWall);
-
-    // Right wall
-    const rightWall = scene.add.image(
-      carRight - wallThickness * 0.5,
-      CAR_ROOF_Y + CAR_INTERIOR_HEIGHT * 0.5,
-      'train-wall',
-    );
-    rightWall.setDisplaySize(wallThickness, CAR_INTERIOR_HEIGHT);
-    rightWall.setTint(0x4a4440);
-    this.container.add(rightWall);
-
-    this.rightWall = scene.add.rectangle(
-      carRight - wallThickness * 0.5,
-      CAR_ROOF_Y + CAR_INTERIOR_HEIGHT * 0.5,
-      wallThickness,
-      CAR_INTERIOR_HEIGHT,
-      0x000000,
-      0,
-    );
-    this.container.add(this.rightWall);
-
-    // Roof surface (walkable exterior)
-    const roofSurface = scene.add.image(this.width * 0.5, CAR_ROOF_WALK_Y, 'train-roof');
-    roofSurface.setDisplaySize(this.width, 8);
-    roofSurface.setTint(0x555048);
-    this.rooftopContainer.add(roofSurface);
-
-    this.roofBody = scene.add.rectangle(
-      this.width * 0.5,
-      CAR_ROOF_WALK_Y,
-      this.width,
-      8,
-      0x000000,
-      0,
-    );
-    this.rooftopContainer.add(this.roofBody);
-  }
-
-  private buildInterior(scene: Phaser.Scene): void {
-    const windowCount = 4;
-    const windowWidth = 36;
-    const windowHeight = 28;
-    const wallThickness = 8;
-    const usable = this.width - wallThickness * 2;
-    const spacing = usable / (windowCount + 1);
-
-    for (let i = 0; i < windowCount; i++) {
-      const wx = wallThickness + spacing * (i + 1);
-      const wy = CAR_ROOF_Y + CAR_INTERIOR_HEIGHT * 0.35;
-
-      // Window frame
-      const win = scene.add.image(wx, wy, 'train-window');
-      win.setDisplaySize(windowWidth, windowHeight);
-      win.setTint(0x1a1820);
-      this.windows.push(win);
-      this.interiorContainer.add(win);
-
-      // Dim amber glow behind window
-      const glow = scene.add.rectangle(wx, wy, windowWidth - 4, windowHeight - 4, 0xffaa44, 0.08);
-      this.windowGlows.push(glow);
-      this.interiorContainer.add(glow);
+    for (let row = 0; row < CAR_TILE_HEIGHT; row++) {
+      const r: TileType[] = [];
+      for (let col = 0; col < CAR_TILE_WIDTH; col++) {
+        // Walls on edges
+        if (col === 0 || col === CAR_TILE_WIDTH - 1) {
+          // Windows at regular intervals on side walls
+          if (row > 1 && row < CAR_TILE_HEIGHT - 2 && row % 3 === 0) {
+            r.push(TileType.WINDOW);
+          } else {
+            r.push(TileType.WALL);
+          }
+        } else if (row === 0) {
+          // Back wall (far wall) — door in center
+          if (col === Math.floor(CAR_TILE_WIDTH / 2)) {
+            r.push(TileType.DOOR);
+          } else {
+            r.push(TileType.WALL);
+          }
+        } else if (row === CAR_TILE_HEIGHT - 1) {
+          // Front wall (near wall) — door in center
+          if (col === Math.floor(CAR_TILE_WIDTH / 2)) {
+            r.push(TileType.DOOR);
+          } else {
+            r.push(TileType.WALL);
+          }
+        } else {
+          // Interior: seats on sides, aisle in middle
+          if ((col === 1) && row > 1 && row < CAR_TILE_HEIGHT - 2 && row % 2 === 0) {
+            r.push(TileType.SEAT_LEFT);
+          } else if ((col === CAR_TILE_WIDTH - 2) && row > 1 && row < CAR_TILE_HEIGHT - 2 && row % 2 === 0) {
+            r.push(TileType.SEAT_RIGHT);
+          } else {
+            r.push(TileType.FLOOR);
+          }
+        }
+      }
+      tiles.push(r);
     }
 
-    // Interior details: floor grime strips
-    for (let i = 0; i < 3; i++) {
-      const gx = Phaser.Math.Between(40, this.width - 40);
-      const grime = scene.add.rectangle(
-        gx,
-        CAR_FLOOR_Y - 2,
-        Phaser.Math.Between(30, 80),
-        3,
-        0x22201c,
-        0.6,
-      );
-      this.interiorContainer.add(grime);
+    // Generate default furniture based on purpose
+    const furniture: PlacedFurniture[] = [];
+    switch (purpose) {
+      case CarPurpose.ENGINE:
+        furniture.push({
+          type: FurnitureType.BRAKE_PANEL,
+          tileX: 3, tileY: 2,
+          widthTiles: 1, heightTiles: 1,
+          interactPrompt: 'Stop Train',
+        });
+        furniture.push({
+          type: FurnitureType.WORKBENCH,
+          tileX: 1, tileY: 4,
+          widthTiles: 2, heightTiles: 1,
+          interactPrompt: 'Repair',
+        });
+        break;
+
+      case CarPurpose.LIVING:
+        furniture.push({
+          type: FurnitureType.BED,
+          tileX: 1, tileY: 2,
+          widthTiles: 2, heightTiles: 2,
+          interactPrompt: 'Sleep',
+        });
+        furniture.push({
+          type: FurnitureType.COOKING_STOVE,
+          tileX: 4, tileY: 3,
+          widthTiles: 1, heightTiles: 1,
+          interactPrompt: 'Cook',
+        });
+        furniture.push({
+          type: FurnitureType.FIRST_AID,
+          tileX: 5, tileY: 6,
+          widthTiles: 1, heightTiles: 1,
+          interactPrompt: 'Use First Aid',
+        });
+        furniture.push({
+          type: FurnitureType.PLANT_BOX,
+          tileX: 1, tileY: 8,
+          widthTiles: 1, heightTiles: 1,
+          interactPrompt: 'Tend Plants',
+        });
+        break;
+
+      case CarPurpose.STORAGE:
+        furniture.push({
+          type: FurnitureType.STORAGE_CRATE,
+          tileX: 1, tileY: 2,
+          widthTiles: 1, heightTiles: 1,
+          uses: 10,
+          interactPrompt: 'Eat',
+        });
+        furniture.push({
+          type: FurnitureType.STORAGE_CRATE,
+          tileX: 5, tileY: 2,
+          widthTiles: 1, heightTiles: 1,
+          uses: 10,
+          interactPrompt: 'Eat',
+        });
+        furniture.push({
+          type: FurnitureType.STORAGE_CRATE,
+          tileX: 1, tileY: 6,
+          widthTiles: 1, heightTiles: 1,
+          uses: 8,
+          interactPrompt: 'Eat',
+        });
+        break;
     }
 
-    // Overhead pipe / bar running along ceiling
-    const pipe = scene.add.rectangle(
-      this.width * 0.5,
-      CAR_ROOF_Y + 14,
-      this.width - 60,
-      3,
-      0x666058,
-      0.7,
-    );
-    this.interiorContainer.add(pipe);
+    return { purpose, tiles, furniture };
   }
 
-  private buildRooftop(scene: Phaser.Scene): void {
-    // Rivets along the roof edges
-    const rivetSpacing = 40;
-    const rivetCount = Math.floor(this.width / rivetSpacing);
-    for (let i = 0; i < rivetCount; i++) {
-      const rx = rivetSpacing * 0.5 + i * rivetSpacing;
-      const rivet = scene.add.circle(rx, CAR_ROOF_WALK_Y - 2, 2, 0x888078, 0.5);
-      this.rooftopContainer.add(rivet);
+  /** Create all visual and physics objects in the scene. */
+  public create(scene: Phaser.Scene, x: number, y: number): void {
+    this.worldX = x;
+    this.worldY = y;
+
+    this.floorContainer = scene.add.container(x, y);
+    this.wallContainer = scene.add.container(x, y);
+    this.furnitureContainer = scene.add.container(x, y);
+    this.frontWallContainer = scene.add.container(x, y);
+
+    this.wallBodies = scene.physics.add.staticGroup();
+    this.furnitureBodies = scene.physics.add.staticGroup();
+
+    const tiles = this.layout.tiles;
+
+    for (let row = 0; row < CAR_TILE_HEIGHT; row++) {
+      for (let col = 0; col < CAR_TILE_WIDTH; col++) {
+        const tx = col * TILE_SIZE;
+        const ty = row * TILE_SIZE;
+        const tile = tiles[row][col];
+
+        switch (tile) {
+          case TileType.FLOOR:
+          case TileType.SEAT_LEFT:
+          case TileType.SEAT_RIGHT:
+          case TileType.DOOR: {
+            // Floor everywhere inside
+            const floor = scene.add.image(tx + TILE_SIZE / 2, ty + TILE_SIZE / 2, 'train-floor');
+            floor.setDisplaySize(TILE_SIZE, TILE_SIZE);
+            this.floorContainer.add(floor);
+
+            // Seats on top of floor
+            if (tile === TileType.SEAT_LEFT) {
+              const seat = scene.add.image(tx + TILE_SIZE / 2, ty + TILE_SIZE / 2, 'train-seat-left');
+              seat.setDisplaySize(TILE_SIZE, TILE_SIZE);
+              this.furnitureContainer.add(seat);
+            } else if (tile === TileType.SEAT_RIGHT) {
+              const seat = scene.add.image(tx + TILE_SIZE / 2, ty + TILE_SIZE / 2, 'train-seat-right');
+              seat.setDisplaySize(TILE_SIZE, TILE_SIZE);
+              this.furnitureContainer.add(seat);
+            }
+            break;
+          }
+
+          case TileType.WALL: {
+            if (row === 0) {
+              // Back wall
+              const wall = scene.add.image(tx + TILE_SIZE / 2, ty + WALL_VISUAL_HEIGHT / 2, 'train-wall-back');
+              wall.setDisplaySize(TILE_SIZE, WALL_VISUAL_HEIGHT);
+              this.wallContainer.add(wall);
+            } else if (row === CAR_TILE_HEIGHT - 1) {
+              // Front wall
+              const wall = scene.add.image(tx + TILE_SIZE / 2, ty + TILE_SIZE / 2, 'train-wall-back');
+              wall.setDisplaySize(TILE_SIZE, WALL_VISUAL_HEIGHT);
+              this.frontWallContainer.add(wall);
+            } else {
+              // Side wall
+              const wall = scene.add.image(tx + TILE_SIZE / 2, ty + TILE_SIZE / 2, 'train-wall-side');
+              wall.setDisplaySize(TILE_SIZE, TILE_SIZE);
+              this.wallContainer.add(wall);
+            }
+
+            // Physics body for wall
+            const body = this.wallBodies.create(
+              x + tx + TILE_SIZE / 2,
+              y + ty + TILE_SIZE / 2,
+              'pixel',
+            ) as Phaser.Physics.Arcade.Sprite;
+            body.setDisplaySize(TILE_SIZE, TILE_SIZE);
+            body.setVisible(false);
+            body.refreshBody();
+            break;
+          }
+
+          case TileType.WINDOW: {
+            const win = scene.add.image(tx + TILE_SIZE / 2, ty + TILE_SIZE / 2, 'train-window');
+            win.setDisplaySize(TILE_SIZE, WALL_VISUAL_HEIGHT);
+            this.wallContainer.add(win);
+
+            // Windows are still walls for collision
+            const body = this.wallBodies.create(
+              x + tx + TILE_SIZE / 2,
+              y + ty + TILE_SIZE / 2,
+              'pixel',
+            ) as Phaser.Physics.Arcade.Sprite;
+            body.setDisplaySize(TILE_SIZE, TILE_SIZE);
+            body.setVisible(false);
+            body.refreshBody();
+            break;
+          }
+        }
+      }
     }
 
-    // Vent / exhaust box in the middle of the roof
-    const vent = scene.add.rectangle(
-      this.width * 0.5,
-      CAR_ROOF_WALK_Y - 12,
-      28,
-      10,
-      0x555048,
-      0.9,
-    );
-    this.rooftopContainer.add(vent);
-    const ventSlats = scene.add.rectangle(
-      this.width * 0.5,
-      CAR_ROOF_WALK_Y - 12,
-      24,
-      2,
-      0x333028,
-      0.8,
-    );
-    this.rooftopContainer.add(ventSlats);
+    // Create furniture sprites and physics
+    this.createFurniture(scene);
+
+    // String lights decoration across the car
+    this.addStringLights(scene);
   }
 
-  private buildLadders(scene: Phaser.Scene): void {
-    const ladderHeight = CAR_INTERIOR_HEIGHT + 20;
-    const ladderCenterY = CAR_ROOF_Y + CAR_INTERIOR_HEIGHT * 0.5 - 10;
+  private createFurniture(scene: Phaser.Scene): void {
+    for (const f of this.layout.furniture) {
+      const fx = f.tileX * TILE_SIZE;
+      const fy = f.tileY * TILE_SIZE;
+      const fw = f.widthTiles * TILE_SIZE;
+      const fh = f.heightTiles * TILE_SIZE;
 
-    // Left ladder
-    this.ladderLeft = scene.add.image(LADDER_WIDTH * 0.5 + 4, ladderCenterY, 'train-ladder');
-    this.ladderLeft.setDisplaySize(LADDER_WIDTH, ladderHeight);
-    this.ladderLeft.setTint(0x887860);
-    this.container.add(this.ladderLeft);
+      let textureKey = 'furniture-crate';
+      let dw = fw;
+      let dh = fh;
 
-    // Ladder rungs (left)
-    const rungCount = 5;
-    for (let i = 0; i < rungCount; i++) {
-      const ry = CAR_ROOF_Y + 10 + (ladderHeight - 20) * (i / (rungCount - 1));
-      const rung = scene.add.rectangle(
-        LADDER_WIDTH * 0.5 + 4,
-        ry,
-        LADDER_WIDTH - 4,
-        3,
-        0x998870,
-        0.9,
-      );
-      this.container.add(rung);
-    }
+      switch (f.type) {
+        case FurnitureType.BED:
+          textureKey = 'furniture-bed';
+          dw = 64; dh = 48;
+          break;
+        case FurnitureType.STORAGE_CRATE:
+          textureKey = 'furniture-crate';
+          dw = 32; dh = 36;
+          break;
+        case FurnitureType.WORKBENCH:
+          textureKey = 'furniture-workbench';
+          dw = 64; dh = 40;
+          break;
+        case FurnitureType.COOKING_STOVE:
+          textureKey = 'furniture-stove';
+          dw = 32; dh = 32;
+          break;
+        case FurnitureType.FIRST_AID:
+          textureKey = 'furniture-firstaid';
+          dw = 24; dh = 24;
+          break;
+        case FurnitureType.PLANT_BOX:
+          textureKey = 'furniture-plantbox';
+          dw = 32; dh = 32;
+          break;
+        case FurnitureType.BRAKE_PANEL:
+          textureKey = 'furniture-brake';
+          dw = 24; dh = 40;
+          break;
+      }
 
-    // Right ladder
-    this.ladderRight = scene.add.image(
-      this.width - LADDER_WIDTH * 0.5 - 4,
-      ladderCenterY,
-      'train-ladder',
-    );
-    this.ladderRight.setDisplaySize(LADDER_WIDTH, ladderHeight);
-    this.ladderRight.setTint(0x887860);
-    this.container.add(this.ladderRight);
+      const img = scene.add.image(fx + fw / 2, fy + fh / 2, textureKey);
+      img.setDisplaySize(dw, dh);
+      this.furnitureContainer.add(img);
 
-    // Ladder rungs (right)
-    for (let i = 0; i < rungCount; i++) {
-      const ry = CAR_ROOF_Y + 10 + (ladderHeight - 20) * (i / (rungCount - 1));
-      const rung = scene.add.rectangle(
-        this.width - LADDER_WIDTH * 0.5 - 4,
-        ry,
-        LADDER_WIDTH - 4,
-        3,
-        0x998870,
-        0.9,
-      );
-      this.container.add(rung);
-    }
-  }
-
-  private buildBarricadeSlots(scene: Phaser.Scene): void {
-    const wallThickness = 8;
-    const usable = this.width - wallThickness * 2;
-    const spacing = usable / (BARRICADE_SLOTS_PER_CAR + 1);
-
-    for (let i = 0; i < BARRICADE_SLOTS_PER_CAR; i++) {
-      const sx = wallThickness + spacing * (i + 1);
-      const sy = CAR_FLOOR_Y - 6;
-
-      // Small dashed marker on the floor
-      const marker = scene.add.rectangle(sx, sy, 20, 4, 0x556644, 0.4);
-      marker.setStrokeStyle(1, 0x88aa66, 0.5);
-      this.interiorContainer.add(marker);
-
-      this.barricadeSlots.push({
-        index: i,
-        worldX: this.worldX + sx,
-        worldY: sy,
-        occupied: false,
-        marker,
-      });
+      // Physics body for furniture
+      if (f.type !== FurnitureType.PLANT_BOX) {
+        const body = this.furnitureBodies!.create(
+          this.worldX + fx + fw / 2,
+          this.worldY + fy + fh / 2,
+          'pixel',
+        ) as Phaser.Physics.Arcade.Sprite;
+        body.setDisplaySize(fw - 4, fh - 4);
+        body.setVisible(false);
+        body.refreshBody();
+      }
     }
   }
 
-  private buildZombieEntryMarkers(_scene: Phaser.Scene): void {
-    // Zombie entry points are logical, not visual. They are referenced by
-    // the wave spawner:
-    //   left edge  = this.worldX
-    //   right edge = this.worldX + this.width
-    //   rooftop    = { x: this.getCenterX(), y: this.getRoofY() }
-    // No visible marker needed – just documenting the contract.
+  private addStringLights(scene: Phaser.Scene): void {
+    const lightsY = 1.5 * TILE_SIZE;
+    const lights = scene.add.image(CAR_PIXEL_WIDTH / 2, lightsY, 'string-lights');
+    lights.setDisplaySize(CAR_PIXEL_WIDTH - TILE_SIZE * 2, 8);
+    lights.setAlpha(0.8);
+    this.wallContainer.add(lights);
   }
 
-  // ------------------------------------------------------------------
-  // Runtime
-  // ------------------------------------------------------------------
+  /** Check if a world-space point is inside this car's bounds. */
+  public containsPoint(wx: number, wy: number): boolean {
+    return (
+      wx >= this.worldX &&
+      wx < this.worldX + CAR_PIXEL_WIDTH &&
+      wy >= this.worldY &&
+      wy < this.worldY + CAR_PIXEL_HEIGHT
+    );
+  }
 
-  /**
-   * Per-frame tick – animates ambient window glow flicker.
-   */
-  public update(time: number, _delta: number): void {
-    // Subtle amber glow pulse
-    const pulse = 0.06 + 0.03 * Math.sin(time * 0.002 + this.carIndex * 1.2);
-    for (const glow of this.windowGlows) {
-      glow.setAlpha(pulse);
+  /** Get walkable world bounds (interior only, excluding walls). */
+  public getInteriorBounds(): { x: number; y: number; w: number; h: number } {
+    return {
+      x: this.worldX + TILE_SIZE,
+      y: this.worldY + TILE_SIZE,
+      w: (CAR_TILE_WIDTH - 2) * TILE_SIZE,
+      h: (CAR_TILE_HEIGHT - 2) * TILE_SIZE,
+    };
+  }
+
+  /** Get the world position of the door at the top (back) of the car. */
+  public getBackDoorPos(): { x: number; y: number } {
+    const col = Math.floor(CAR_TILE_WIDTH / 2);
+    return {
+      x: this.worldX + col * TILE_SIZE + TILE_SIZE / 2,
+      y: this.worldY + TILE_SIZE / 2,
+    };
+  }
+
+  /** Get the world position of the door at the bottom (front) of the car. */
+  public getFrontDoorPos(): { x: number; y: number } {
+    const col = Math.floor(CAR_TILE_WIDTH / 2);
+    return {
+      x: this.worldX + col * TILE_SIZE + TILE_SIZE / 2,
+      y: this.worldY + (CAR_TILE_HEIGHT - 1) * TILE_SIZE + TILE_SIZE / 2,
+    };
+  }
+
+  /** Find the PlacedFurniture nearest to a world point within range. */
+  public findNearestFurniture(
+    wx: number, wy: number, range: number,
+  ): PlacedFurniture | null {
+    let best: PlacedFurniture | null = null;
+    let bestDist = range;
+
+    for (const f of this.layout.furniture) {
+      const cx = this.worldX + f.tileX * TILE_SIZE + (f.widthTiles * TILE_SIZE) / 2;
+      const cy = this.worldY + f.tileY * TILE_SIZE + (f.heightTiles * TILE_SIZE) / 2;
+      const d = Math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2);
+      if (d < bestDist) {
+        bestDist = d;
+        best = f;
+      }
     }
-  }
-
-  /**
-   * Tear-down helper.
-   */
-  public destroy(): void {
-    this.container.destroy(true);
+    return best;
   }
 }

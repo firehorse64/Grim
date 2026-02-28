@@ -6,66 +6,71 @@
 export const GAME_WIDTH = 1280;
 export const GAME_HEIGHT = 720;
 
-// Physics
-export const GRAVITY = 800;
-export const TRAIN_SCROLL_SPEED = 120; // pixels per second for parallax
+// Tile / grid
+export const TILE_SIZE = 32;
+export const HALF_TILE = 16;
 
-// Player defaults
+// Train car layout (in tiles).  Each car viewed from a 3/4 angle:
+//   width  = interior walkable columns  (the aisle + seats on each side)
+//   height = interior walkable rows     (length of the car along the aisle)
+export const CAR_TILE_WIDTH = 7;       // 7 × 32 = 224 px interior width
+export const CAR_TILE_HEIGHT = 12;     // 12 × 32 = 384 px interior length
+export const CAR_PIXEL_WIDTH = CAR_TILE_WIDTH * TILE_SIZE;
+export const CAR_PIXEL_HEIGHT = CAR_TILE_HEIGHT * TILE_SIZE;
+
+// Perspective wall heights (for the 3/4-view rendered walls)
+export const WALL_VISUAL_HEIGHT = 48;  // how tall walls look from the angle
+export const WINDOW_WIDTH = 40;
+export const WINDOW_HEIGHT = 28;
+
+// Number of starting train cars
+export const NUM_TRAIN_CARS = 3;
+
+// Gap between cars (connector corridor)
+export const CAR_GAP = 40;
+
+// Player
+export const PLAYER_SPEED = 140;
 export const PLAYER_START_HP = 100;
 export const PLAYER_MAX_HP = 100;
-export const PLAYER_SPEED = 200;
-export const PLAYER_JUMP_VELOCITY = -420;
-export const PLAYER_INVINCIBILITY_MS = 1000;
-export const PLAYER_START_CURRENCY = 0;
+export const PLAYER_INTERACT_RANGE = 44;
 
-// Train layout
-export const NUM_TRAIN_CARS = 5;
-export const CAR_WIDTH = 480;
-export const CAR_INTERIOR_HEIGHT = 180;
-export const CAR_GAP = 48;
-export const CAR_FLOOR_Y = 480;
-export const CAR_ROOF_Y = CAR_FLOOR_Y - CAR_INTERIOR_HEIGHT;
-export const CAR_ROOF_WALK_Y = CAR_ROOF_Y - 20;
-export const LADDER_WIDTH = 24;
-export const BARRICADE_SLOTS_PER_CAR = 3;
+// NPC
+export const NPC_SPEED = 60;
+export const NPC_IDLE_MIN_MS = 2000;
+export const NPC_IDLE_MAX_MS = 5000;
 
-// Wave system
-export const WAVE_COUNTDOWN_MS = 8000;
-export const WAVE_BASE_ZOMBIES = 5;
-export const WAVE_ZOMBIE_SCALING = 3;     // additional zombies per wave
-export const WAVE_SPAWN_INTERVAL_MS = 1800;
-export const WAVE_SPAWN_INTERVAL_MIN = 600;
-export const WAVE_SPAWN_SPEEDUP = 80;     // ms faster per wave
-export const BOSS_WAVE_INTERVAL = 10;     // boss every N waves
-export const DIFFICULTY_HP_SCALE = 0.08;  // zombie HP increases per wave
-export const DIFFICULTY_SPEED_SCALE = 0.02;
+// Survival
+export const HUNGER_MAX = 100;
+export const ENERGY_MAX = 100;
+export const HUNGER_DECAY_PER_SEC = 0.12;      // ~14 min to empty
+export const ENERGY_DECAY_PER_SEC = 0.06;       // ~28 min to empty
+export const LOW_STAT_THRESHOLD = 25;           // warnings below this
+export const CRITICAL_STAT_THRESHOLD = 10;      // health drain below this
+export const HEALTH_DRAIN_PER_SEC = 0.5;        // when hunger/energy critical
+export const SLEEP_RESTORE_AMOUNT = 80;
+export const EAT_RESTORE_AMOUNT = 30;
 
-// Combat
-export const KNOCKBACK_FORCE = 150;
-export const HEADSHOT_MULTIPLIER = 2.0;
-export const CRIT_CHANCE = 0.05;
-export const CRIT_MULTIPLIER = 1.5;
+// Train movement / scrolling
+export const TRAIN_SCROLL_SPEED = 80;  // px/s exterior scrolls when train moves
 
-// Barricades
-export const BARRICADE_WOOD_HP = 100;
-export const BARRICADE_METAL_HP = 250;
-export const BARRICADE_ELECTRIC_HP = 150;
-export const BARRICADE_ELECTRIC_DAMAGE = 15;
-export const BARRICADE_WOOD_COST = 30;
-export const BARRICADE_METAL_COST = 75;
-export const BARRICADE_ELECTRIC_COST = 100;
+// Zombies (ambient / exterior)
+export const ZOMBIE_AMBIENT_SPEED = 40;
+export const ZOMBIE_CHASE_SPEED = 90;
+export const ZOMBIE_AGGRO_RANGE = 180;
+export const ZOMBIE_DAMAGE = 15;
+export const ZOMBIE_ATTACK_COOLDOWN_MS = 1200;
+export const AMBIENT_ZOMBIE_SPAWN_INTERVAL = 3000;  // ms between ambient spawns
 
-// Economy
-export const BASE_CURRENCY_PER_KILL = 5;
-export const WAVE_BONUS_CURRENCY = 50;
-export const SURVIVOR_RESCUE_BONUS = 100;
+// Exploration
+export const EXPLORE_AREA_WIDTH = 800;
+export const EXPLORE_AREA_HEIGHT = 600;
+export const EXPLORE_ZOMBIE_SPAWN_INTERVAL = 5000;
+export const RESOURCE_SPAWN_COUNT = 8;
 
-// Day/night cycle
-export const WAVES_PER_DAY_CYCLE = 8;
+// Barricading
+export const BARRICADE_HP = 80;
+export const BARRICADE_BUILD_TIME_MS = 2000;
 
-// Events
-export const EVENT_CHANCE_BASE = 0.15;
-export const EVENT_CHANCE_INCREASE = 0.05;
-export const TUNNEL_DURATION_MS = 10000;
-export const BRIDGE_DURATION_MS = 15000;
-export const STATION_DURATION_MS = 25000;
+// Day / night  (for future use)
+export const DAY_CYCLE_DURATION_MS = 600000;  // 10 minutes per full cycle

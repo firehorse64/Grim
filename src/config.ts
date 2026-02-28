@@ -1,12 +1,11 @@
 import Phaser from 'phaser';
-import { GAME_WIDTH, GAME_HEIGHT, GRAVITY } from './data/BalanceConstants';
+import { GAME_WIDTH, GAME_HEIGHT } from './data/BalanceConstants';
 
 import { BootScene } from './scenes/BootScene';
 import { PreloaderScene } from './scenes/PreloaderScene';
 import { MenuScene } from './scenes/MenuScene';
 import { GameScene } from './scenes/GameScene';
 import { HudScene } from './scenes/HudScene';
-import { ShopScene } from './scenes/ShopScene';
 import { PauseScene } from './scenes/PauseScene';
 import { GameOverScene } from './scenes/GameOverScene';
 import { TouchControlsScene } from './scenes/TouchControlsScene';
@@ -16,11 +15,11 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
   parent: 'game-container',
-  backgroundColor: '#0a0a1a',
+  backgroundColor: '#1a1a2e',
   physics: {
     default: 'arcade',
     arcade: {
-      gravity: { x: 0, y: GRAVITY },
+      gravity: { x: 0, y: 0 },
       debug: false,
     },
   },
@@ -34,14 +33,13 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     MenuScene,
     GameScene,
     HudScene,
-    ShopScene,
     PauseScene,
     GameOverScene,
     TouchControlsScene,
   ],
   render: {
     antialias: false,
-    pixelArt: false, // hand-drawn style, not pixel art
+    pixelArt: true,
     roundPixels: true,
   },
   input: {

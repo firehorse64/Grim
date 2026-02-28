@@ -1,7 +1,5 @@
 import Phaser from 'phaser';
 import { EventBus } from '../utils/EventBus';
-import { GameEvents } from '../types/EventTypes';
-import { SAVE_KEY } from '../types/SaveTypes';
 import { GAME_WIDTH, GAME_HEIGHT } from '../data/BalanceConstants';
 import { isMobileDevice } from '../systems/TouchDetect';
 
@@ -226,7 +224,7 @@ export class PauseScene extends Phaser.Scene {
       gameScene.scene.resume();
     }
 
-    EventBus.emit(GameEvents.GAME_RESUMED);
+    EventBus.emit('game:resumed');
   }
 
   private openSettings(): void {

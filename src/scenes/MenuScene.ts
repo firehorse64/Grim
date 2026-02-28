@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, TRAIN_SCROLL_SPEED } from '../data/BalanceConstants';
-import { SAVE_KEY } from '../types/SaveTypes';
 import { EventBus } from '../utils/EventBus';
 import { isMobileDevice } from '../systems/TouchDetect';
+
+const SAVE_KEY = 'grim-line-save';
 
 /**
  * MenuScene - Title screen with dark, atmospheric aesthetic.
@@ -370,7 +371,7 @@ export class MenuScene extends Phaser.Scene {
     const centerX = GAME_WIDTH / 2;
 
     // Glow layer (behind the main title)
-    this.titleGlow = this.add.text(centerX, 140, 'ZOMBIE TRAIN', {
+    this.titleGlow = this.add.text(centerX, 140, 'GRIM LINE', {
       fontFamily: '"Impact", "Arial Black", sans-serif',
       fontSize: '72px',
       color: '#ff0000',
@@ -381,7 +382,7 @@ export class MenuScene extends Phaser.Scene {
       .setAlpha(0.4);
 
     // Main title
-    this.titleText = this.add.text(centerX, 140, 'ZOMBIE TRAIN', {
+    this.titleText = this.add.text(centerX, 140, 'GRIM LINE', {
       fontFamily: '"Impact", "Arial Black", sans-serif',
       fontSize: '72px',
       color: '#cc0000',

@@ -2,19 +2,20 @@ export enum GameState {
   MENU = 'MENU',
   PLAYING = 'PLAYING',
   PAUSED = 'PAUSED',
-  SHOP = 'SHOP',
   GAME_OVER = 'GAME_OVER',
 }
 
-export enum Direction {
-  LEFT = -1,
-  RIGHT = 1,
+export enum GameMode {
+  TRAVELING = 'TRAVELING',
+  STOPPED = 'STOPPED',
+  EXPLORING = 'EXPLORING',
 }
 
-export enum ZoneType {
-  INTERIOR = 'INTERIOR',
-  ROOFTOP = 'ROOFTOP',
-  CONNECTOR = 'CONNECTOR',
+export enum Direction {
+  UP = 'UP',
+  DOWN = 'DOWN',
+  LEFT = 'LEFT',
+  RIGHT = 'RIGHT',
 }
 
 export enum TimeOfDay {
@@ -32,19 +33,23 @@ export enum Weather {
 }
 
 export interface InputState {
-  moveX: number;
-  moveY: number;
-  aimX: number;
-  aimY: number;
-  aimAngle: number;
-  shooting: boolean;
-  reloading: boolean;
-  jumping: boolean;
-  weaponSlot: number;
+  moveX: number;   // -1..1
+  moveY: number;   // -1..1
   interact: boolean;
-  grenade: boolean;
-  barricade: boolean;
+  cancel: boolean;
   pause: boolean;
-  climbUp: boolean;
-  climbDown: boolean;
+}
+
+export interface SurvivalState {
+  hunger: number;   // 0..100
+  energy: number;   // 0..100
+  health: number;   // 0..100
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  type: 'food' | 'material' | 'medicine' | 'ammo' | 'tool';
+  quantity: number;
+  icon: string;      // texture key
 }
