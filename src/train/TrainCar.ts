@@ -7,7 +7,8 @@ import {
   CAR_PIXEL_HEIGHT,
   WALL_VISUAL_HEIGHT,
 } from '../data/BalanceConstants';
-import { TileType, CarPurpose, CarLayout, PlacedFurniture, FurnitureType } from '../types/TrainTypes';
+import { TileType, CarPurpose, CarLayout, PlacedFurniture, FurnitureType, WindowState } from '../types/TrainTypes';
+import { WINDOW_MAX_HP } from '../data/BalanceConstants';
 
 /**
  * A single train car rendered from 3/4 angle.
@@ -153,7 +154,23 @@ export class TrainCar {
         break;
     }
 
-    return { purpose, tiles, furniture };
+    // Build window state list
+    const windows: WindowState[] = [];
+    for (let row = 0; row < CAR_TILE_HEIGHT; row++) {
+      for (let col = 0; col < CAR_TILE_WIDTH; col++) {
+        if (tiles[row][col] === TileType.WINDOW) {
+          windows.push({
+            row, col,
+            hp: WINDOW_MAX_HP,
+            maxHp: WINDOW_MAX_HP,
+            barricaded: false,
+            barricadeHp: 0,
+          });
+        }
+      }
+    }
+
+    return { purpose, tiles, furniture, windows };
   }
 
   /** Create all visual and physics objects in the scene. */

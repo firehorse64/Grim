@@ -1158,6 +1158,110 @@ function generateUITextures(scene: Phaser.Scene): void {
 }
 
 // ============================================================
+// COMBAT & EXPLORATION TEXTURES
+// ============================================================
+
+function generateCombatTextures(scene: Phaser.Scene): void {
+  // -- Bullet (4×4) --
+  makeTexture(scene, 'bullet', 4, 4, (g) => {
+    g.fillStyle(0xffdd44, 1);
+    g.fillCircle(2, 2, 2);
+    g.fillStyle(0xffffff, 0.5);
+    g.fillRect(1, 1, 1, 1);
+  });
+
+  // -- Muzzle flash (8×8) --
+  makeTexture(scene, 'muzzle-flash', 8, 8, (g) => {
+    g.fillStyle(0xffaa22, 0.8);
+    g.fillCircle(4, 4, 4);
+    g.fillStyle(0xffee88, 0.6);
+    g.fillCircle(4, 3, 3);
+    g.fillStyle(0xffffff, 0.4);
+    g.fillCircle(4, 4, 1);
+  });
+
+  // -- Building wall (32×32) --
+  makeTexture(scene, 'building-wall', 32, 32, (g) => {
+    resetSeed(900);
+    g.fillStyle(0x665555, 1);
+    g.fillRect(0, 0, 32, 32);
+    for (let by = 0; by < 32; by += 8) {
+      const offset = (by / 8) % 2 === 0 ? 0 : 8;
+      for (let bx = offset; bx < 32; bx += 16) {
+        g.fillStyle(lerpColor(0x776655, 0x665544, rng()), 1);
+        g.fillRect(bx + 1, by + 1, 14, 6);
+      }
+    }
+    addNoise(g, 0, 0, 32, 32, 0x000000, 0.06, 0.15);
+    for (let i = 0; i < 2; i++) {
+      sketchLine(g, rngInt(4, 28), rngInt(4, 28), rngInt(4, 28), rngInt(4, 28),
+        0x333333, 0.3, 1, 0.5);
+    }
+  });
+
+  // -- Building floor (32×32) --
+  makeTexture(scene, 'building-floor', 32, 32, (g) => {
+    resetSeed(910);
+    g.fillStyle(0x8a8a7a, 1);
+    g.fillRect(0, 0, 32, 32);
+    g.fillStyle(darken(0x8a8a7a, 0.1), 1);
+    g.fillRect(0, 0, 16, 16);
+    g.fillRect(16, 16, 16, 16);
+    addNoise(g, 0, 0, 32, 32, 0x000000, 0.05, 0.12);
+    g.fillStyle(0x555544, 0.2);
+    g.fillRect(rngInt(2, 20), rngInt(2, 20), rngInt(4, 10), rngInt(4, 10));
+  });
+
+  // -- Fire particle (8×8) --
+  makeTexture(scene, 'fire-particle', 8, 8, (g) => {
+    g.fillStyle(0xff4400, 0.8);
+    g.fillCircle(4, 4, 4);
+    g.fillStyle(0xffaa22, 0.6);
+    g.fillCircle(4, 3, 3);
+    g.fillStyle(0xffee44, 0.4);
+    g.fillCircle(4, 2, 2);
+  });
+
+  // -- Weapon rifle icon (24×8) --
+  makeTexture(scene, 'weapon-rifle', 24, 8, (g) => {
+    g.fillStyle(0x664422, 1);
+    g.fillRect(0, 2, 8, 4);
+    g.fillStyle(0x555555, 1);
+    g.fillRect(6, 1, 14, 5);
+    g.fillStyle(0x444444, 1);
+    g.fillRect(18, 2, 6, 3);
+    g.fillStyle(0x333333, 1);
+    g.fillRect(10, 0, 6, 2);
+  });
+
+  // -- Weapon melee icon (16×16) --
+  makeTexture(scene, 'weapon-melee', 16, 16, (g) => {
+    g.fillStyle(0x777777, 1);
+    g.fillRect(2, 6, 12, 3);
+    g.fillStyle(0x884422, 1);
+    g.fillRect(2, 6, 4, 3);
+    g.fillStyle(0x666666, 1);
+    g.fillRect(12, 4, 3, 7);
+  });
+
+  // -- Inventory slot (32×32) --
+  makeTexture(scene, 'inv-slot', 32, 32, (g) => {
+    g.fillStyle(0x222233, 0.8);
+    g.fillRect(0, 0, 32, 32);
+    g.lineStyle(1, 0x445566, 0.6);
+    g.strokeRect(1, 1, 30, 30);
+  });
+
+  // -- Inventory slot selected (32×32) --
+  makeTexture(scene, 'inv-slot-selected', 32, 32, (g) => {
+    g.fillStyle(0x333355, 0.9);
+    g.fillRect(0, 0, 32, 32);
+    g.lineStyle(2, 0x88aaff, 0.8);
+    g.strokeRect(1, 1, 30, 30);
+  });
+}
+
+// ============================================================
 // MAIN EXPORT
 // ============================================================
 
@@ -1168,4 +1272,5 @@ export function generateAllAssets(scene: Phaser.Scene): void {
   generateEnvironmentTextures(scene);
   generateResourceTextures(scene);
   generateUITextures(scene);
+  generateCombatTextures(scene);
 }

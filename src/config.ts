@@ -9,6 +9,7 @@ import { HudScene } from './scenes/HudScene';
 import { PauseScene } from './scenes/PauseScene';
 import { GameOverScene } from './scenes/GameOverScene';
 import { TouchControlsScene } from './scenes/TouchControlsScene';
+import { InventoryScene } from './scenes/InventoryScene';
 
 export const gameConfig: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -36,6 +37,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     PauseScene,
     GameOverScene,
     TouchControlsScene,
+    InventoryScene,
   ],
   render: {
     antialias: false,

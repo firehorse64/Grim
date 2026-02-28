@@ -38,8 +38,26 @@ export interface PlacedFurniture {
   interactPrompt: string; // e.g. "Press E to Sleep"
 }
 
+export interface WindowState {
+  row: number;
+  col: number;
+  hp: number;
+  maxHp: number;
+  barricaded: boolean;
+  barricadeHp: number;
+}
+
+export interface MaintenanceComponent {
+  id: string;
+  name: string;
+  hp: number;
+  maxHp: number;
+  degradeRate: number; // per second while moving
+}
+
 export interface CarLayout {
   purpose: CarPurpose;
   tiles: TileType[][];         // [row][col]
   furniture: PlacedFurniture[];
+  windows: WindowState[];
 }

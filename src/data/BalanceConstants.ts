@@ -68,9 +68,70 @@ export const EXPLORE_AREA_HEIGHT = 600;
 export const EXPLORE_ZOMBIE_SPAWN_INTERVAL = 5000;
 export const RESOURCE_SPAWN_COUNT = 8;
 
+// Combat
+export const RIFLE_DAMAGE = 25;
+export const RIFLE_FIRE_RATE_MS = 400;
+export const RIFLE_RANGE = 200;
+export const MELEE_DAMAGE = 15;
+export const MELEE_RANGE = 36;
+export const MELEE_COOLDOWN_MS = 500;
+export const BULLET_SPEED = 350;
+
+// Inventory
+export const INVENTORY_MAX_SLOTS = 20;
+export const STARTING_AMMO = 15;
+export const STARTING_FOOD = 3;
+export const STARTING_MATERIALS = 5;
+
 // Barricading
 export const BARRICADE_HP = 80;
 export const BARRICADE_BUILD_TIME_MS = 2000;
+export const BARRICADE_MATERIAL_COST = 3;
+export const WINDOW_MAX_HP = 50;
 
-// Day / night  (for future use)
+// Maintenance
+export const ENGINE_MAX_HP = 100;
+export const ENGINE_DEGRADE_PER_SEC = 0.03;
+export const BRAKE_MAX_HP = 100;
+export const BRAKE_DEGRADE_PER_SEC = 0.02;
+export const WHEELS_MAX_HP = 100;
+export const WHEELS_DEGRADE_PER_SEC = 0.015;
+export const REPAIR_MATERIAL_COST = 2;
+export const REPAIR_AMOUNT = 30;
+export const MAINTENANCE_WARNING_THRESHOLD = 30;
+
+// Day / night
 export const DAY_CYCLE_DURATION_MS = 600000;  // 10 minutes per full cycle
+export const DAY_PHASE_DURATION_MS = 150000;  // 2.5 min per phase
+export const NIGHT_ZOMBIE_MULTIPLIER = 2.0;
+export const NIGHT_AMBIENT_ALPHA = 0.35;
+
+// Exploration
+export const BUILDING_COUNT_MIN = 2;
+export const BUILDING_COUNT_MAX = 4;
+export const BUILDING_MIN_SIZE = 4;
+export const BUILDING_MAX_SIZE = 7;
+export const EXPLORE_RESOURCE_TOTAL = 10;
+export const EXPLORE_ZOMBIE_MAX = 8;
+export const EXIT_TRAIN_RANGE = 40;
+
+// Fire events
+export const FIRE_CHANCE_PER_MIN = 0.02;
+export const FIRE_DAMAGE_PER_SEC = 5;
+export const FIRE_SPREAD_TIME_MS = 8000;
+
+// Breach
+export const BREACH_CHANCE_PER_MIN_STOPPED = 0.08;
+export const ZOMBIE_WINDOW_DAMAGE = 2;
+export const BREACH_ZOMBIE_COUNT = 2;
+
+// NPC
+export const MAX_NPCS = 4;
+export const NPC_RECRUIT_CHANCE = 0.3;
+
+// Crafting
+export const CRAFT_TIME_MS = 1500;
+
+// Save
+export const SAVE_VERSION = 1;
+export const SAVE_KEY = 'grim-line-save';

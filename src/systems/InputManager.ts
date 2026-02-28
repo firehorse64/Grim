@@ -4,7 +4,7 @@ import { isMobileDevice } from './TouchDetect';
 
 /**
  * Unified input manager for keyboard and touch.
- * Produces a simple InputState each frame: movement, interact, pause.
+ * Produces InputState each frame: movement, interact, attack, inventory, pause.
  */
 export class InputManager {
   public state: InputState = InputManager.emptyState();
@@ -20,6 +20,9 @@ export class InputManager {
     right: Phaser.Input.Keyboard.Key;
     e: Phaser.Input.Keyboard.Key;
     esc: Phaser.Input.Keyboard.Key;
+    space: Phaser.Input.Keyboard.Key;
+    tab: Phaser.Input.Keyboard.Key;
+    q: Phaser.Input.Keyboard.Key;
   };
 
   private scene: Phaser.Scene;
@@ -29,6 +32,7 @@ export class InputManager {
   public touchMoveX: number = 0;
   public touchMoveY: number = 0;
   public touchInteract: boolean = false;
+  public touchAttack: boolean = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -49,6 +53,9 @@ export class InputManager {
       right: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
       e: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E),
       esc: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC),
+      space: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+      tab: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
+      q: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
     };
   }
 
@@ -75,8 +82,15 @@ export class InputManager {
     st.moveX = mx;
     st.moveY = my;
     st.interact = (this.keys?.e.isDown ?? false) || this.touchInteract;
+    st.attack = (this.keys?.space.isDown ?? false) || this.touchAttack;
+    st.openInventory = this.keys?.tab.isDown ?? false;
     st.cancel = false;
     st.pause = this.keys?.esc.isDown ?? false;
+  }
+
+  /** Check if Q was just pressed (weapon switch). */
+  public isQJustPressed(): boolean {
+    return this.keys ? Phaser.Input.Keyboard.JustDown(this.keys.q) : false;
   }
 
   public static emptyState(): InputState {
@@ -84,6 +98,8 @@ export class InputManager {
       moveX: 0,
       moveY: 0,
       interact: false,
+      attack: false,
+      openInventory: false,
       cancel: false,
       pause: false,
     };

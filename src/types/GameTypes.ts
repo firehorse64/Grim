@@ -32,10 +32,17 @@ export enum Weather {
   STORM = 'STORM',
 }
 
+export enum WeaponType {
+  RIFLE = 'RIFLE',
+  MELEE = 'MELEE',
+}
+
 export interface InputState {
   moveX: number;   // -1..1
   moveY: number;   // -1..1
   interact: boolean;
+  attack: boolean;
+  openInventory: boolean;
   cancel: boolean;
   pause: boolean;
 }
@@ -52,4 +59,25 @@ export interface InventoryItem {
   type: 'food' | 'material' | 'medicine' | 'ammo' | 'tool';
   quantity: number;
   icon: string;      // texture key
+}
+
+export interface CraftRecipe {
+  id: string;
+  name: string;
+  ingredients: { itemId: string; quantity: number }[];
+  result: { itemId: string; quantity: number };
+  requiredStation: 'workbench' | 'stove' | 'none';
+}
+
+export interface SaveData {
+  version: number;
+  survival: SurvivalState;
+  inventory: InventoryItem[];
+  gameMode: GameMode;
+  timeOfDay: TimeOfDay;
+  dayTime: number;
+  trainMoving: boolean;
+  npcNames: string[];
+  windowStates: { carIndex: number; row: number; col: number; hp: number; barricaded: boolean }[];
+  maintenanceHp: { engine: number; brake: number; wheels: number };
 }
