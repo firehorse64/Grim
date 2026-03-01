@@ -15,7 +15,11 @@ export class InventoryScene extends Phaser.Scene {
   private itemTexts: Phaser.GameObjects.Text[] = [];
   private selectedIndex: number = 0;
   private detailText!: Phaser.GameObjects.Text;
-  private craftButtons: Phaser.GameObjects.Container[] = [];
+  private useButton!: Phaser.GameObjects.Container;
+  private craftButtons: { container: Phaser.GameObjects.Container; recipe: CraftRecipe }[] = [];
+
+  // Track highlighted inventory slots for craft preview
+  private highlightedSlots: Set<number> = new Set();
 
   // References (set via data)
   private inventory!: InventoryManager;
@@ -45,6 +49,7 @@ export class InventoryScene extends Phaser.Scene {
     this.slots = [];
     this.itemTexts = [];
     this.craftButtons = [];
+    this.highlightedSlots = new Set();
 
     // Dark overlay
     this.overlay = this.add.rectangle(
@@ -56,7 +61,7 @@ export class InventoryScene extends Phaser.Scene {
       fontSize: '24px', fontFamily: 'monospace', color: '#ccccdd', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(1);
 
-    // Inventory grid (5 columns × 4 rows)
+    // Inventory grid (5 columns x 4 rows)
     const cols = 5;
     const slotSize = 36;
     const gap = 4;
@@ -98,16 +103,29 @@ export class InventoryScene extends Phaser.Scene {
       this.slots.push(container);
     }
 
-    // Item detail panel
-    this.detailText = this.add.text(startX, startY + 4 * (slotSize + gap) + 20, '', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#aaaaaa', wordWrap: { width: gridW },
+    // Item detail panel (below grid, with enough space)
+    const detailY = startY + 4 * (slotSize + gap) + 16;
+    this.detailText = this.add.text(startX, detailY, '', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#aaaaaa',
+      wordWrap: { width: gridW - 10 },
     }).setDepth(1);
 
-    // Use button
-    const useBtn = this.add.text(startX + gridW - 60, startY + 4 * (slotSize + gap) + 20, '[E] Use', {
-      fontSize: '12px', fontFamily: 'monospace', color: '#88aaff', fontStyle: 'bold',
-    }).setDepth(1).setInteractive();
-    useBtn.on('pointerdown', () => this.useSelected());
+    // Use button (below detail text, separate and clear)
+    const useBtnY = detailY + 40;
+    const useBtnBg = this.add.rectangle(0, 0, 80, 28, 0x334466, 1)
+      .setStrokeStyle(1, 0x6688aa);
+    const useBtnText = this.add.text(0, 0, 'USE', {
+      fontSize: '14px', fontFamily: 'monospace', color: '#88aaff', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    this.useButton = this.add.container(startX + 40, useBtnY, [useBtnBg, useBtnText]).setDepth(1);
+    this.useButton.setSize(80, 28);
+    this.useButton.setInteractive(
+      new Phaser.Geom.Rectangle(-40, -14, 80, 28),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    this.useButton.on('pointerdown', () => this.useSelected());
+    this.useButton.on('pointerover', () => useBtnBg.setFillStyle(0x445577));
+    this.useButton.on('pointerout', () => useBtnBg.setFillStyle(0x334466));
 
     // Crafting panel (right side)
     this.createCraftingPanel();
@@ -138,7 +156,7 @@ export class InventoryScene extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'monospace', color: '#ccaa44', fontStyle: 'bold',
     }).setDepth(1);
 
-    const recipes = this.crafting.getRecipesForStation(this.nearStation as any);
+    const recipes = this.crafting.getRecipesForStation(this.nearStation as 'workbench' | 'stove' | 'none');
     for (let i = 0; i < recipes.length; i++) {
       const recipe = recipes[i];
       const ry = panelY + i * 40;
@@ -155,7 +173,6 @@ export class InventoryScene extends Phaser.Scene {
       // Ingredients list
       const ingText = recipe.ingredients.map(ing => {
         const have = this.inventory.getCount(ing.itemId);
-        const color = have >= ing.quantity ? '#88aa88' : '#aa6666';
         return `${ing.itemId.replace(/-/g, ' ')}:${have}/${ing.quantity}`;
       }).join('  ');
 
@@ -165,18 +182,60 @@ export class InventoryScene extends Phaser.Scene {
       container.add(ingTxt);
 
       if (canCraft) {
-        const craftBtn = this.add.text(200, 4, '[CRAFT]', {
+        const craftBtnBg = this.add.rectangle(215, 7, 50, 22, 0x225522, 1)
+          .setStrokeStyle(1, 0x44aa44);
+        const craftBtn = this.add.text(215, 7, 'CRAFT', {
           fontSize: '10px', fontFamily: 'monospace', color: '#88ff88', fontStyle: 'bold',
-        }).setInteractive();
-        craftBtn.on('pointerdown', () => {
+        }).setOrigin(0.5);
+
+        craftBtnBg.setInteractive();
+        craftBtnBg.on('pointerover', () => {
+          craftBtnBg.setFillStyle(0x336633);
+          this.highlightCraftIngredients(recipe);
+        });
+        craftBtnBg.on('pointerout', () => {
+          craftBtnBg.setFillStyle(0x225522);
+          this.clearHighlights();
+        });
+        craftBtnBg.on('pointerdown', () => {
           this.crafting.craft(recipe.id, this.inventory);
           this.refreshUI();
         });
-        container.add(craftBtn);
+
+        container.add([craftBtnBg, craftBtn]);
       }
 
-      this.craftButtons.push(container);
+      this.craftButtons.push({ container, recipe });
     }
+  }
+
+  private highlightCraftIngredients(recipe: CraftRecipe): void {
+    this.clearHighlights();
+    const items = this.inventory.getItems();
+    const neededIds = new Set(recipe.ingredients.map(ing => ing.itemId));
+
+    for (let i = 0; i < items.length && i < this.slots.length; i++) {
+      if (neededIds.has(items[i].id)) {
+        this.highlightedSlots.add(i);
+        const bg = this.slots[i].getAt(0) as Phaser.GameObjects.Image;
+        bg.setTint(0xffcc44);
+      }
+    }
+  }
+
+  private clearHighlights(): void {
+    for (const idx of this.highlightedSlots) {
+      if (this.slots[idx]) {
+        const bg = this.slots[idx].getAt(0) as Phaser.GameObjects.Image;
+        bg.clearTint();
+        if (idx === this.selectedIndex) {
+          bg.setTexture('inv-slot-selected');
+        } else {
+          bg.setTexture('inv-slot');
+        }
+      }
+    }
+    this.highlightedSlots.clear();
   }
 
   update(): void {
@@ -203,12 +262,10 @@ export class InventoryScene extends Phaser.Scene {
   }
 
   private selectSlot(index: number): void {
-    // Deselect old
     if (this.slots[this.selectedIndex]) {
       const oldBg = this.slots[this.selectedIndex].getAt(0) as Phaser.GameObjects.Image;
       oldBg.setTexture('inv-slot');
     }
-    // Select new
     this.selectedIndex = index;
     if (this.slots[this.selectedIndex]) {
       const newBg = this.slots[this.selectedIndex].getAt(0) as Phaser.GameObjects.Image;
@@ -221,9 +278,13 @@ export class InventoryScene extends Phaser.Scene {
     const items = this.inventory.getItems();
     if (this.selectedIndex < items.length) {
       const item = items[this.selectedIndex];
-      this.detailText.setText(`${item.name} (×${item.quantity}) — ${item.type}`);
+      const typeLabel = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+      this.detailText.setText(`${item.name} (x${item.quantity})\nType: ${typeLabel}`);
+      const usable = item.type === 'food' || item.type === 'medicine';
+      this.useButton.setVisible(usable);
     } else {
       this.detailText.setText('Empty slot');
+      this.useButton.setVisible(false);
     }
   }
 
@@ -246,7 +307,6 @@ export class InventoryScene extends Phaser.Scene {
   }
 
   private refreshUI(): void {
-    // Quick refresh — close and reopen
     this.scene.restart({
       inventory: this.inventory,
       crafting: this.crafting,

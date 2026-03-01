@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
-import { GAME_WIDTH, GAME_HEIGHT } from '../data/BalanceConstants';
+import { GAME_WIDTH, GAME_HEIGHT, WORLD_EXPAND_LEFT, WORLD_EXPAND_RIGHT } from '../data/BalanceConstants';
 
 /**
  * Camera follows the player with a deadzone and bounded to the
- * train area. Smooth lerp movement.
+ * expanded world area. Smooth lerp movement.
  */
 export class CameraManager {
   private scene!: Phaser.Scene;
@@ -19,12 +19,12 @@ export class CameraManager {
     this.camera = scene.cameras.main;
     this.target = target;
 
-    // Set world bounds with some margin
+    // Expand world bounds horizontally for exploration left/right
     const margin = 100;
     this.camera.setBounds(
-      worldBounds.x - margin,
+      worldBounds.x - WORLD_EXPAND_LEFT - margin,
       worldBounds.y - margin,
-      worldBounds.w + margin * 2,
+      worldBounds.w + WORLD_EXPAND_LEFT + WORLD_EXPAND_RIGHT + margin * 2,
       worldBounds.h + margin * 2,
     );
 
@@ -36,23 +36,18 @@ export class CameraManager {
     this.camera.setZoom(1.8);
   }
 
-  /** Update camera each frame. */
   public update(_time: number, _delta: number): void {
     // Camera follow is handled by Phaser's startFollow
-    // Additional effects can go here (screen shake, tint, etc.)
   }
 
-  /** Shake the camera (for impacts, etc.). */
   public shake(duration: number = 200, intensity: number = 0.005): void {
     this.camera.shake(duration, intensity);
   }
 
-  /** Flash the camera (for sleep transitions, etc.). */
   public flash(color: number = 0x000000, duration: number = 500): void {
     this.camera.flash(duration, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
   }
 
-  /** Fade to black and back (for sleep). */
   public fadeForSleep(callback: () => void): void {
     this.camera.fadeOut(800, 0, 0, 0);
     this.scene.time.delayedCall(1000, () => {
@@ -61,18 +56,25 @@ export class CameraManager {
     });
   }
 
-  /** Get the camera's current scroll Y (for environment scrolling). */
   public getScrollY(): number {
     return this.camera.scrollY + GAME_HEIGHT / 2;
   }
 
-  /** Expand bounds for exploration mode. */
+  /** Get pointer position in world coordinates. */
+  public getWorldPointer(): { x: number; y: number } {
+    const pointer = this.scene.input.activePointer;
+    return {
+      x: pointer.worldX,
+      y: pointer.worldY,
+    };
+  }
+
   public setExplorationBounds(bounds: { x: number; y: number; w: number; h: number }): void {
     const margin = 200;
     this.camera.setBounds(
-      bounds.x - margin,
+      bounds.x - WORLD_EXPAND_LEFT - margin,
       bounds.y - margin,
-      bounds.w + margin * 2,
+      bounds.w + WORLD_EXPAND_LEFT + WORLD_EXPAND_RIGHT + margin * 2,
       bounds.h + margin * 2,
     );
   }

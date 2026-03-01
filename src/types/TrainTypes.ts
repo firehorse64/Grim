@@ -18,6 +18,9 @@ export enum FurnitureType {
   BARRICADE_SPOT = 'BARRICADE_SPOT',
   FIRST_AID = 'FIRST_AID',
   PLANT_BOX = 'PLANT_BOX',
+  MAP_BOARD = 'MAP_BOARD',
+  SPOTLIGHT = 'SPOTLIGHT',
+  LIGHT_SWITCH = 'LIGHT_SWITCH',
 }
 
 export enum CarPurpose {
@@ -45,6 +48,14 @@ export interface WindowState {
   maxHp: number;
   barricaded: boolean;
   barricadeHp: number;
+  open: boolean;
+}
+
+export interface DoorState {
+  row: number;
+  col: number;
+  open: boolean;
+  isEndDoor: boolean; // true for car-end doors (top/bottom), false for inter-car doors
 }
 
 export interface MaintenanceComponent {
@@ -60,4 +71,5 @@ export interface CarLayout {
   tiles: TileType[][];         // [row][col]
   furniture: PlacedFurniture[];
   windows: WindowState[];
+  doors: DoorState[];
 }

@@ -80,4 +80,9 @@ export interface SaveData {
   npcNames: string[];
   windowStates: { carIndex: number; row: number; col: number; hp: number; barricaded: boolean }[];
   maintenanceHp: { engine: number; brake: number; wheels: number };
+  currentLocation: string;
+  destination: string | null;
+  travelProgress: number;
+  fuel: number;
+  trainSpeed: number;
 }

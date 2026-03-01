@@ -135,3 +135,21 @@ export const CRAFT_TIME_MS = 1500;
 // Save
 export const SAVE_VERSION = 1;
 export const SAVE_KEY = 'grim-line-save';
+
+// Fuel
+export const FUEL_MAX = 100;
+export const FUEL_CONSUMPTION_PER_SEC = 0.08;
+export const FUEL_PER_SCRAP = 10;
+
+// Train speed
+export const TRAIN_SPEED_MIN = 30;
+export const TRAIN_SPEED_MAX = 160;
+export const TRAIN_SPEED_DEFAULT = 80;
+export const TRAIN_SPEED_STEP = 10;
+
+// World expansion
+export const WORLD_EXPAND_LEFT = 400;
+export const WORLD_EXPAND_RIGHT = 400;
+
+// Travel
+export const TRAVEL_SPEED_FACTOR = 0.5;

@@ -578,6 +578,96 @@ function generateFurnitureTextures(scene: Phaser.Scene): void {
     }
     addNoise(g, 0, 0, 32, 32, 0x000000, 0.05, 0.12);
   });
+
+  // -- Open window (32×48, window slid up showing outside air) --
+  makeTexture(scene, 'train-window-open', 32, 48, (g) => {
+    resetSeed(380);
+    // Wall around window
+    g.fillStyle(PAL.wallPaint, 1);
+    g.fillRect(0, 0, 32, 48);
+    // Window frame
+    g.fillStyle(PAL.windowFrame, 1);
+    g.fillRect(2, 8, 28, 32);
+    // Open air (dark exterior)
+    g.fillStyle(0x223344, 1);
+    g.fillRect(4, 10, 24, 22);
+    // Wind lines (to indicate open)
+    g.fillStyle(0x88aacc, 0.3);
+    g.fillRect(6, 14, 10, 1);
+    g.fillRect(10, 20, 12, 1);
+    g.fillRect(8, 26, 8, 1);
+    // Window pane pushed up
+    g.fillStyle(PAL.window, 0.5);
+    g.fillRect(4, 32, 24, 6);
+    g.fillStyle(0xffffff, 0.06);
+    g.fillRect(6, 33, 8, 4);
+    // Frame details
+    sketchLine(g, 16, 10, 16, 38, PAL.windowFrame, 0.4, 1.5, 0.3);
+  });
+
+  // -- Closed door (32×48, door fully shut with lock indicator) --
+  makeTexture(scene, 'train-door-closed', 32, 48, (g) => {
+    resetSeed(385);
+    g.fillStyle(PAL.wallMetal, 1);
+    g.fillRect(0, 0, 32, 48);
+    // Door frame
+    g.fillStyle(darken(PAL.wallMetal, 0.2), 1);
+    g.fillRect(4, 2, 24, 44);
+    // Door surface (closed — more solid looking)
+    g.fillStyle(PAL.wallMetalDark, 1);
+    g.fillRect(6, 4, 20, 40);
+    // Crossed boards / lock indicator
+    g.fillStyle(0x884444, 0.6);
+    g.fillRect(10, 20, 12, 3);
+    // Handle
+    g.fillStyle(0xcccccc, 1);
+    g.fillRect(22, 22, 3, 6);
+    // Lock icon
+    g.fillStyle(0xcc6644, 0.8);
+    g.fillCircle(12, 22, 3);
+    g.fillStyle(0x884422, 0.8);
+    g.fillRect(10, 22, 4, 5);
+    addNoise(g, 6, 4, 20, 40, 0x000000, 0.05, 0.12);
+  });
+
+  // -- Headlight (16×16, bright cone light) --
+  makeTexture(scene, 'train-headlight', 16, 16, (g) => {
+    resetSeed(390);
+    g.fillStyle(0x444444, 1);
+    g.fillRect(4, 4, 8, 8);
+    g.fillStyle(0xffeeaa, 0.9);
+    g.fillCircle(8, 8, 5);
+    g.fillStyle(0xffffff, 0.5);
+    g.fillCircle(8, 8, 3);
+  });
+
+  // -- Spotlight mount (24×24, side-mounted light) --
+  makeTexture(scene, 'train-spotlight', 24, 24, (g) => {
+    resetSeed(395);
+    // Mount bracket
+    g.fillStyle(0x555555, 1);
+    g.fillRect(8, 4, 8, 4);
+    g.fillRect(10, 0, 4, 4);
+    // Light housing
+    g.fillStyle(0x666666, 1);
+    g.fillRect(4, 8, 16, 12);
+    // Lens
+    g.fillStyle(0xffeeaa, 0.8);
+    g.fillRect(6, 10, 12, 8);
+    g.fillStyle(0xffffff, 0.4);
+    g.fillRect(8, 12, 8, 4);
+  });
+
+  // -- Light cone (64×128, projected light beam) --
+  makeTexture(scene, 'light-cone', 64, 128, (g) => {
+    resetSeed(396);
+    // Trapezoidal light cone
+    g.fillStyle(0xffeeaa, 0.15);
+    g.fillTriangle(24, 0, 0, 128, 64, 128);
+    g.fillTriangle(40, 0, 0, 128, 64, 128);
+    g.fillStyle(0xffffff, 0.05);
+    g.fillTriangle(28, 0, 12, 128, 52, 128);
+  });
 }
 
 // ============================================================

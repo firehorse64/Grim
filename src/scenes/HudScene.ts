@@ -9,13 +9,33 @@ import {
   LOW_STAT_THRESHOLD,
   ENGINE_MAX_HP,
   BRAKE_MAX_HP,
+  FUEL_MAX,
 } from '../data/BalanceConstants';
 import { GameMode, WeaponType, TimeOfDay } from '../types/GameTypes';
 import { isMobileDevice } from '../systems/TouchDetect';
 
+export interface HudUpdateData {
+  hunger: number;
+  energy: number;
+  health: number;
+  mode: GameMode;
+  weapon: WeaponType;
+  ammo: number;
+  timeOfDay: TimeOfDay;
+  engineHp: number;
+  brakeHp: number;
+  hasFire: boolean;
+  npcCount: number;
+  fuel: number;
+  trainSpeed: number;
+  destination: string | null;
+  travelProgress: number;
+  currentLocation: string;
+}
+
 /**
  * HudScene – overlay showing survival stats, combat info, train status,
- * maintenance, and interaction prompts. Receives all data through EventBus.
+ * maintenance, fuel, destination, and interaction prompts.
  */
 export class HudScene extends Phaser.Scene {
   // Stat bars
@@ -35,7 +55,9 @@ export class HudScene extends Phaser.Scene {
   private modeText!: Phaser.GameObjects.Text;
 
   // Combat display
+  private equippedLabel!: Phaser.GameObjects.Text;
   private weaponText!: Phaser.GameObjects.Text;
+  private ammoLabel!: Phaser.GameObjects.Text;
   private ammoText!: Phaser.GameObjects.Text;
 
   // Time of day
@@ -49,18 +71,24 @@ export class HudScene extends Phaser.Scene {
   private brakeBarBg!: Phaser.GameObjects.Image;
   private brakeBarFill!: Phaser.GameObjects.Image;
 
+  // Fuel gauge
+  private fuelLabel!: Phaser.GameObjects.Text;
+  private fuelBarBg!: Phaser.GameObjects.Image;
+  private fuelBarFill!: Phaser.GameObjects.Image;
+
   // Fire warning
   private fireWarning!: Phaser.GameObjects.Text;
 
   // NPC count
   private npcText!: Phaser.GameObjects.Text;
 
+  // Destination/objective
+  private destText!: Phaser.GameObjects.Text;
+  private objectiveText!: Phaser.GameObjects.Text;
+
   // Warning flash
   private warningOverlay!: Phaser.GameObjects.Rectangle;
   private warningAlpha: number = 0;
-
-  // Interaction prompt
-  private interactPrompt!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'HudScene' });
@@ -72,190 +100,165 @@ export class HudScene extends Phaser.Scene {
     const barH = 8;
     const smallBarW = 60;
     const labelStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontSize: '10px',
-      fontFamily: 'monospace',
-      color: '#cccccc',
+      fontSize: '10px', fontFamily: 'monospace', color: '#cccccc',
     };
     const smallLabelStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontSize: '9px',
-      fontFamily: 'monospace',
-      color: '#999999',
+      fontSize: '9px', fontFamily: 'monospace', color: '#999999',
     };
 
     // ---- Health bar ----
     let yPos = margin;
-    this.healthLabel = this.add.text(margin, yPos, 'HP', labelStyle);
-    this.healthBarBg = this.add.image(margin + 24, yPos + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(barW, barH);
-    this.healthBarFill = this.add.image(margin + 24, yPos + 4, 'bar-health').setOrigin(0, 0.5).setDisplaySize(barW, barH);
+    this.healthLabel = this.add.text(margin, yPos, 'Health', labelStyle);
+    this.healthBarBg = this.add.image(margin + 46, yPos + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(barW, barH);
+    this.healthBarFill = this.add.image(margin + 46, yPos + 4, 'bar-health').setOrigin(0, 0.5).setDisplaySize(barW, barH);
 
     // ---- Hunger bar ----
     yPos += 16;
-    this.hungerLabel = this.add.text(margin, yPos, 'FD', labelStyle);
-    this.hungerBarBg = this.add.image(margin + 24, yPos + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(barW, barH);
-    this.hungerBarFill = this.add.image(margin + 24, yPos + 4, 'bar-hunger').setOrigin(0, 0.5).setDisplaySize(barW, barH);
+    this.hungerLabel = this.add.text(margin, yPos, 'Food', labelStyle);
+    this.hungerBarBg = this.add.image(margin + 46, yPos + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(barW, barH);
+    this.hungerBarFill = this.add.image(margin + 46, yPos + 4, 'bar-hunger').setOrigin(0, 0.5).setDisplaySize(barW, barH);
 
     // ---- Energy bar ----
     yPos += 16;
-    this.energyLabel = this.add.text(margin, yPos, 'EN', labelStyle);
-    this.energyBarBg = this.add.image(margin + 24, yPos + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(barW, barH);
-    this.energyBarFill = this.add.image(margin + 24, yPos + 4, 'bar-energy').setOrigin(0, 0.5).setDisplaySize(barW, barH);
+    this.energyLabel = this.add.text(margin, yPos, 'Energy', labelStyle);
+    this.energyBarBg = this.add.image(margin + 46, yPos + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(barW, barH);
+    this.energyBarFill = this.add.image(margin + 46, yPos + 4, 'bar-energy').setOrigin(0, 0.5).setDisplaySize(barW, barH);
 
-    // ---- Weapon & Ammo (below stats) ----
+    // ---- Equipped weapon (below stats) ----
     yPos += 22;
-    this.weaponText = this.add.text(margin, yPos, 'RIFLE', {
-      fontSize: '10px',
-      fontFamily: 'monospace',
-      color: '#aaaacc',
-      fontStyle: 'bold',
+    this.equippedLabel = this.add.text(margin, yPos, 'Equipped:', {
+      fontSize: '9px', fontFamily: 'monospace', color: '#888899',
     });
-    this.ammoText = this.add.text(margin + 50, yPos, '15', {
-      fontSize: '10px',
-      fontFamily: 'monospace',
-      color: '#cccc88',
+    this.weaponText = this.add.text(margin + 65, yPos, 'Rifle', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#aaaacc', fontStyle: 'bold',
+    });
+
+    yPos += 14;
+    this.ammoLabel = this.add.text(margin, yPos, 'Ammo:', {
+      fontSize: '9px', fontFamily: 'monospace', color: '#888899',
+    });
+    this.ammoText = this.add.text(margin + 42, yPos, '15', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#cccc88',
     });
 
     // ---- Top-right: Mode + Time ----
     this.modeText = this.add.text(GAME_WIDTH - margin, margin, 'TRAVELING', {
-      fontSize: '11px',
-      fontFamily: 'monospace',
-      color: '#88cc88',
-      fontStyle: 'bold',
+      fontSize: '11px', fontFamily: 'monospace', color: '#88cc88', fontStyle: 'bold',
     }).setOrigin(1, 0);
 
     this.timeText = this.add.text(GAME_WIDTH - margin, margin + 16, 'DAY', {
-      fontSize: '10px',
-      fontFamily: 'monospace',
-      color: '#cccc88',
+      fontSize: '10px', fontFamily: 'monospace', color: '#cccc88',
     }).setOrigin(1, 0);
 
-    // ---- NPC count (below time) ----
+    // ---- NPC count ----
     this.npcText = this.add.text(GAME_WIDTH - margin, margin + 32, 'Crew: 1', smallLabelStyle).setOrigin(1, 0);
 
-    // ---- Maintenance bars (top-right, below NPC) ----
-    const maintX = GAME_WIDTH - margin - smallBarW - 24;
+    // ---- Maintenance bars (top-right) ----
+    const maintX = GAME_WIDTH - margin - smallBarW - 42;
     let maintY = margin + 48;
 
-    this.engineLabel = this.add.text(maintX, maintY, 'ENG', smallLabelStyle);
-    this.engineBarBg = this.add.image(maintX + 28, maintY + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
-    this.engineBarFill = this.add.image(maintX + 28, maintY + 4, 'bar-health').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
+    this.engineLabel = this.add.text(maintX, maintY, 'Engine', smallLabelStyle);
+    this.engineBarBg = this.add.image(maintX + 42, maintY + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
+    this.engineBarFill = this.add.image(maintX + 42, maintY + 4, 'bar-health').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
 
     maintY += 14;
-    this.brakeLabel = this.add.text(maintX, maintY, 'BRK', smallLabelStyle);
-    this.brakeBarBg = this.add.image(maintX + 28, maintY + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
-    this.brakeBarFill = this.add.image(maintX + 28, maintY + 4, 'bar-health').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
+    this.brakeLabel = this.add.text(maintX, maintY, 'Brakes', smallLabelStyle);
+    this.brakeBarBg = this.add.image(maintX + 42, maintY + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
+    this.brakeBarFill = this.add.image(maintX + 42, maintY + 4, 'bar-health').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
 
-    // ---- Fire warning (flashing red text) ----
+    // ---- Fuel gauge ----
+    maintY += 14;
+    this.fuelLabel = this.add.text(maintX, maintY, 'Fuel', smallLabelStyle);
+    this.fuelBarBg = this.add.image(maintX + 42, maintY + 4, 'stat-bar-bg').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
+    this.fuelBarFill = this.add.image(maintX + 42, maintY + 4, 'bar-energy').setOrigin(0, 0.5).setDisplaySize(smallBarW, 6);
+
+    // ---- Destination / objective (bottom-left) ----
+    this.objectiveText = this.add.text(margin, GAME_HEIGHT - 58, 'Objective: Reach Port Echo (The Coast)', {
+      fontSize: '9px', fontFamily: 'monospace', color: '#aa8844',
+    });
+    this.destText = this.add.text(margin, GAME_HEIGHT - 44, '', {
+      fontSize: '10px', fontFamily: 'monospace', color: '#88aacc',
+    });
+
+    // ---- Fire warning ----
     this.fireWarning = this.add.text(GAME_WIDTH / 2, margin + 4, 'FIRE!', {
-      fontSize: '14px',
-      fontFamily: 'monospace',
-      color: '#ff4422',
-      fontStyle: 'bold',
+      fontSize: '14px', fontFamily: 'monospace', color: '#ff4422', fontStyle: 'bold',
     }).setOrigin(0.5, 0).setVisible(false);
 
-    // ---- Warning overlay (red edge tint when low stats) ----
+    // ---- Warning overlay ----
     this.warningOverlay = this.add.rectangle(
-      GAME_WIDTH / 2, GAME_HEIGHT / 2,
-      GAME_WIDTH, GAME_HEIGHT,
-      0xcc0000, 0,
-    );
-    this.warningOverlay.setDepth(100);
+      GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0xcc0000, 0,
+    ).setDepth(100);
 
-    // ---- Interaction prompt (bottom-center) ----
-    this.interactPrompt = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 40, '', {
-      fontSize: '12px',
-      fontFamily: 'monospace',
-      color: '#ffffff',
-      backgroundColor: '#00000088',
-      padding: { x: 8, y: 4 },
-    }).setOrigin(0.5).setVisible(false);
-
-    // ---- Controls hint (bottom) ----
-    const isMobile = isMobileDevice();
-    if (!isMobile) {
-      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'WASD: Move  |  E: Interact  |  SPACE: Attack  |  TAB: Inventory  |  ESC: Pause', {
-        fontSize: '9px',
-        fontFamily: 'monospace',
-        color: '#555566',
+    // ---- Controls hint ----
+    if (!isMobileDevice()) {
+      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'WASD: Move | Click: Fire | E: Interact | TAB: Inventory | M: Map | +/-: Speed | ESC: Pause', {
+        fontSize: '8px', fontFamily: 'monospace', color: '#555566',
       }).setOrigin(0.5);
     }
 
     // ---- Listen for HUD updates ----
     EventBus.on('hud:update', this.onHudUpdate, this);
-    EventBus.on('hud:interact-prompt', this.onInteractPrompt, this);
   }
 
-  private onHudUpdate(data: {
-    hunger: number;
-    energy: number;
-    health: number;
-    mode: GameMode;
-    weapon: WeaponType;
-    ammo: number;
-    timeOfDay: TimeOfDay;
-    engineHp: number;
-    brakeHp: number;
-    hasFire: boolean;
-    npcCount: number;
-  }): void {
+  private onHudUpdate(data: HudUpdateData): void {
     const barW = 90;
     const smallBarW = 60;
 
-    // Update stat bar widths
     this.healthBarFill.setDisplaySize(barW * (data.health / PLAYER_MAX_HP), 8);
     this.hungerBarFill.setDisplaySize(barW * (data.hunger / HUNGER_MAX), 8);
     this.energyBarFill.setDisplaySize(barW * (data.energy / ENERGY_MAX), 8);
 
-    // Mode text
-    this.modeText.setText(data.mode);
+    // Mode + speed
+    const speedSuffix = data.mode === GameMode.TRAVELING ? ` (${data.trainSpeed} km/h)` : '';
+    this.modeText.setText(data.mode + speedSuffix);
     switch (data.mode) {
-      case GameMode.TRAVELING:
-        this.modeText.setColor('#88cc88');
-        break;
-      case GameMode.STOPPED:
-        this.modeText.setColor('#cccc44');
-        break;
-      case GameMode.EXPLORING:
-        this.modeText.setColor('#cc6644');
-        break;
+      case GameMode.TRAVELING: this.modeText.setColor('#88cc88'); break;
+      case GameMode.STOPPED: this.modeText.setColor('#cccc44'); break;
+      case GameMode.EXPLORING: this.modeText.setColor('#cc6644'); break;
     }
 
     // Weapon & ammo
-    this.weaponText.setText(data.weapon);
+    const weaponName = data.weapon === WeaponType.RIFLE ? 'Rifle' : 'Melee';
+    this.weaponText.setText(weaponName);
     if (data.weapon === WeaponType.RIFLE) {
-      this.ammoText.setText(`x${data.ammo}`);
-      this.ammoText.setVisible(true);
+      this.ammoLabel.setVisible(true);
+      this.ammoText.setText(`${data.ammo}`).setVisible(true);
       this.ammoText.setColor(data.ammo <= 3 ? '#ff4444' : '#cccc88');
     } else {
+      this.ammoLabel.setVisible(false);
       this.ammoText.setVisible(false);
     }
 
     // Time of day
     this.timeText.setText(data.timeOfDay);
     switch (data.timeOfDay) {
-      case TimeOfDay.DAWN:
-        this.timeText.setColor('#ddaa66');
-        break;
-      case TimeOfDay.DAY:
-        this.timeText.setColor('#cccc88');
-        break;
-      case TimeOfDay.DUSK:
-        this.timeText.setColor('#cc8844');
-        break;
-      case TimeOfDay.NIGHT:
-        this.timeText.setColor('#6666aa');
-        break;
+      case TimeOfDay.DAWN: this.timeText.setColor('#ddaa66'); break;
+      case TimeOfDay.DAY: this.timeText.setColor('#cccc88'); break;
+      case TimeOfDay.DUSK: this.timeText.setColor('#cc8844'); break;
+      case TimeOfDay.NIGHT: this.timeText.setColor('#6666aa'); break;
     }
 
     // NPC count
     this.npcText.setText(`Crew: ${data.npcCount}`);
 
-    // Maintenance bars
+    // Maintenance
     this.engineBarFill.setDisplaySize(smallBarW * (data.engineHp / ENGINE_MAX_HP), 6);
     this.brakeBarFill.setDisplaySize(smallBarW * (data.brakeHp / BRAKE_MAX_HP), 6);
-
-    // Color maintenance bars based on HP
     this.engineBarFill.setTint(data.engineHp < 30 ? 0xff4444 : data.engineHp < 60 ? 0xcccc44 : 0xffffff);
     this.brakeBarFill.setTint(data.brakeHp < 30 ? 0xff4444 : data.brakeHp < 60 ? 0xcccc44 : 0xffffff);
+
+    // Fuel
+    this.fuelBarFill.setDisplaySize(smallBarW * (data.fuel / FUEL_MAX), 6);
+    this.fuelBarFill.setTint(data.fuel < 20 ? 0xff4444 : data.fuel < 40 ? 0xcccc44 : 0xffffff);
+
+    // Destination
+    if (data.destination) {
+      const pct = Math.floor(data.travelProgress * 100);
+      this.destText.setText(`Heading to: ${data.destination} (${pct}%)`);
+    } else {
+      this.destText.setText(`At: ${data.currentLocation} - Set destination on map [M]`);
+    }
 
     // Fire warning
     if (data.hasFire) {
@@ -265,29 +268,15 @@ export class HudScene extends Phaser.Scene {
       this.fireWarning.setVisible(false);
     }
 
-    // Warning flash when low stats
+    // Warning flash
     const isLow = data.hunger < LOW_STAT_THRESHOLD || data.energy < LOW_STAT_THRESHOLD;
-    this.warningAlpha = isLow
-      ? 0.08 + Math.sin(Date.now() * 0.005) * 0.04
-      : 0;
+    this.warningAlpha = isLow ? 0.08 + Math.sin(Date.now() * 0.005) * 0.04 : 0;
     this.warningOverlay.setAlpha(this.warningAlpha);
-
-    // Flash bar colors when low
     this.hungerBarFill.setTint(data.hunger < LOW_STAT_THRESHOLD ? 0xff4444 : 0xffffff);
     this.energyBarFill.setTint(data.energy < LOW_STAT_THRESHOLD ? 0xff4444 : 0xffffff);
   }
 
-  private onInteractPrompt(text: string | null): void {
-    if (text) {
-      this.interactPrompt.setText(`[E] ${text}`);
-      this.interactPrompt.setVisible(true);
-    } else {
-      this.interactPrompt.setVisible(false);
-    }
-  }
-
   shutdown(): void {
     EventBus.off('hud:update', this.onHudUpdate, this);
-    EventBus.off('hud:interact-prompt', this.onInteractPrompt, this);
   }
 }

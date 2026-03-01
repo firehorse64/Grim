@@ -7,19 +7,32 @@ import {
   TILE_SIZE,
   TRAIN_SCROLL_SPEED,
   GAME_WIDTH,
+  FUEL_MAX,
+  FUEL_CONSUMPTION_PER_SEC,
+  TRAIN_SPEED_MIN,
+  TRAIN_SPEED_MAX,
+  TRAIN_SPEED_DEFAULT,
+  TRAIN_SPEED_STEP,
 } from '../data/BalanceConstants';
 import { TrainCar } from './TrainCar';
 import { CarPurpose } from '../types/TrainTypes';
+import { EventBus } from '../utils/EventBus';
 
 /**
  * Train – manages all TrainCars stacked vertically.
  * Car 0 is at the top (engine, direction of travel).
  * Cars below extend downward.
+ * Tracks fuel, speed, and headlights.
  */
 export class Train {
   public cars: TrainCar[] = [];
   public isMoving: boolean = true;
-  public speed: number = TRAIN_SCROLL_SPEED;
+  public speed: number = TRAIN_SPEED_DEFAULT;
+  public fuel: number = FUEL_MAX;
+
+  // Lights
+  public headlightsOn: boolean = true;
+  public interiorLightsOn: boolean = true;
 
   private trainX: number = 0;
   private trainY: number = 0;
@@ -63,6 +76,36 @@ export class Train {
         }
       }
     }
+  }
+
+  /** Update fuel consumption. Returns true if still has fuel. */
+  public updateFuel(delta: number): boolean {
+    if (!this.isMoving) return true;
+    const dt = delta / 1000;
+    // Fuel consumption scales with speed
+    const speedFactor = this.speed / TRAIN_SPEED_DEFAULT;
+    this.fuel = Math.max(0, this.fuel - FUEL_CONSUMPTION_PER_SEC * speedFactor * dt);
+    if (this.fuel <= 0) {
+      this.stop();
+      EventBus.emit('train:out-of-fuel');
+      return false;
+    }
+    return true;
+  }
+
+  /** Add fuel from scrap metal. */
+  public addFuel(amount: number): void {
+    this.fuel = Math.min(FUEL_MAX, this.fuel + amount);
+  }
+
+  /** Increase speed by one step. */
+  public speedUp(): void {
+    this.speed = Math.min(TRAIN_SPEED_MAX, this.speed + TRAIN_SPEED_STEP);
+  }
+
+  /** Decrease speed by one step. */
+  public speedDown(): void {
+    this.speed = Math.max(TRAIN_SPEED_MIN, this.speed - TRAIN_SPEED_STEP);
   }
 
   public getAllWallBodies(): Phaser.Physics.Arcade.StaticGroup[] {
@@ -115,11 +158,27 @@ export class Train {
     };
   }
 
+  /** Check if a point is inside a connector corridor (not inside a car). */
+  public isInConnector(wx: number, wy: number): boolean {
+    for (let i = 0; i < this.cars.length - 1; i++) {
+      const car = this.cars[i];
+      const connTop = car.worldY + CAR_PIXEL_HEIGHT;
+      const connBot = connTop + CAR_GAP;
+      const connLeft = this.trainX + Math.floor(CAR_PIXEL_WIDTH / 2) - TILE_SIZE;
+      const connRight = connLeft + TILE_SIZE * 2;
+      if (wx >= connLeft && wx <= connRight && wy >= connTop && wy <= connBot) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public stop(): void {
     this.isMoving = false;
   }
 
   public start(): void {
+    if (this.fuel <= 0) return;
     this.isMoving = true;
   }
 

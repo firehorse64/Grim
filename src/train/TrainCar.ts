@@ -7,7 +7,7 @@ import {
   CAR_PIXEL_HEIGHT,
   WALL_VISUAL_HEIGHT,
 } from '../data/BalanceConstants';
-import { TileType, CarPurpose, CarLayout, PlacedFurniture, FurnitureType, WindowState } from '../types/TrainTypes';
+import { TileType, CarPurpose, CarLayout, PlacedFurniture, FurnitureType, WindowState, DoorState } from '../types/TrainTypes';
 import { WINDOW_MAX_HP } from '../data/BalanceConstants';
 
 /**
@@ -100,6 +100,18 @@ export class TrainCar {
           widthTiles: 2, heightTiles: 1,
           interactPrompt: 'Repair',
         });
+        furniture.push({
+          type: FurnitureType.MAP_BOARD,
+          tileX: 5, tileY: 2,
+          widthTiles: 1, heightTiles: 1,
+          interactPrompt: 'View Map',
+        });
+        furniture.push({
+          type: FurnitureType.LIGHT_SWITCH,
+          tileX: 5, tileY: 4,
+          widthTiles: 1, heightTiles: 1,
+          interactPrompt: 'Toggle Lights',
+        });
         break;
 
       case CarPurpose.LIVING:
@@ -165,12 +177,27 @@ export class TrainCar {
             maxHp: WINDOW_MAX_HP,
             barricaded: false,
             barricadeHp: 0,
+            open: false,
           });
         }
       }
     }
 
-    return { purpose, tiles, furniture, windows };
+    // Build door state list
+    const doors: DoorState[] = [];
+    for (let row = 0; row < CAR_TILE_HEIGHT; row++) {
+      for (let col = 0; col < CAR_TILE_WIDTH; col++) {
+        if (tiles[row][col] === TileType.DOOR) {
+          doors.push({
+            row, col,
+            open: true, // doors start open for passage
+            isEndDoor: row === 0 || row === CAR_TILE_HEIGHT - 1,
+          });
+        }
+      }
+    }
+
+    return { purpose, tiles, furniture, windows, doors };
   }
 
   /** Create all visual and physics objects in the scene. */
@@ -314,6 +341,18 @@ export class TrainCar {
           textureKey = 'furniture-brake';
           dw = 24; dh = 40;
           break;
+        case FurnitureType.MAP_BOARD:
+          textureKey = 'furniture-crate';
+          dw = 28; dh = 28;
+          break;
+        case FurnitureType.SPOTLIGHT:
+          textureKey = 'train-spotlight';
+          dw = 24; dh = 24;
+          break;
+        case FurnitureType.LIGHT_SWITCH:
+          textureKey = 'furniture-brake'; // reuse brake panel texture
+          dw = 16; dh = 24;
+          break;
       }
 
       const img = scene.add.image(fx + fw / 2, fy + fh / 2, textureKey);
@@ -397,5 +436,67 @@ export class TrainCar {
       }
     }
     return best;
+  }
+
+  /** Find the nearest window to a world point within range. */
+  public findNearestWindow(wx: number, wy: number, range: number): WindowState | null {
+    let best: WindowState | null = null;
+    let bestDist = range;
+
+    for (const w of this.layout.windows) {
+      const cx = this.worldX + w.col * TILE_SIZE + TILE_SIZE / 2;
+      const cy = this.worldY + w.row * TILE_SIZE + TILE_SIZE / 2;
+      const d = Math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2);
+      if (d < bestDist) {
+        bestDist = d;
+        best = w;
+      }
+    }
+    return best;
+  }
+
+  /** Find the nearest door to a world point within range. */
+  public findNearestDoor(wx: number, wy: number, range: number): DoorState | null {
+    let best: DoorState | null = null;
+    let bestDist = range;
+
+    for (const d of this.layout.doors) {
+      const cx = this.worldX + d.col * TILE_SIZE + TILE_SIZE / 2;
+      const cy = this.worldY + d.row * TILE_SIZE + TILE_SIZE / 2;
+      const dist = Math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = d;
+      }
+    }
+    return best;
+  }
+
+  /** Toggle a window's open/closed state. Returns new state. */
+  public toggleWindow(window: WindowState): boolean {
+    window.open = !window.open;
+    return window.open;
+  }
+
+  /** Toggle a door's open/closed state. Returns new state. */
+  public toggleDoor(door: DoorState): boolean {
+    door.open = !door.open;
+    return door.open;
+  }
+
+  /** Get the world position of a window tile. */
+  public getWindowWorldPos(window: WindowState): { x: number; y: number } {
+    return {
+      x: this.worldX + window.col * TILE_SIZE + TILE_SIZE / 2,
+      y: this.worldY + window.row * TILE_SIZE + TILE_SIZE / 2,
+    };
+  }
+
+  /** Get the world position of a door tile. */
+  public getDoorWorldPos(door: DoorState): { x: number; y: number } {
+    return {
+      x: this.worldX + door.col * TILE_SIZE + TILE_SIZE / 2,
+      y: this.worldY + door.row * TILE_SIZE + TILE_SIZE / 2,
+    };
   }
 }

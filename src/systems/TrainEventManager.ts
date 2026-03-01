@@ -86,6 +86,7 @@ export class TrainEventManager {
               maxHp: WINDOW_MAX_HP,
               barricaded: false,
               barricadeHp: 0,
+              open: false,
             });
           }
         }

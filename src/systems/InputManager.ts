@@ -3,7 +3,7 @@ import { InputState } from '../types/GameTypes';
 import { isMobileDevice } from './TouchDetect';
 
 /**
- * Unified input manager for keyboard and touch.
+ * Unified input manager for keyboard, touch, and mouse.
  * Produces InputState each frame: movement, interact, attack, inventory, pause.
  */
 export class InputManager {
@@ -23,16 +23,24 @@ export class InputManager {
     space: Phaser.Input.Keyboard.Key;
     tab: Phaser.Input.Keyboard.Key;
     q: Phaser.Input.Keyboard.Key;
+    m: Phaser.Input.Keyboard.Key;
+    plus: Phaser.Input.Keyboard.Key;
+    minus: Phaser.Input.Keyboard.Key;
   };
 
   private scene: Phaser.Scene;
   public isMobile: boolean;
 
-  // Touch state (set externally by TouchControlsScene)
+  // Touch state
   public touchMoveX: number = 0;
   public touchMoveY: number = 0;
   public touchInteract: boolean = false;
   public touchAttack: boolean = false;
+
+  // Mouse state
+  public mouseDown: boolean = false;
+  private _mouseJustPressed: boolean = false;
+  private _mouseWasDown: boolean = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -56,13 +64,15 @@ export class InputManager {
       space: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       tab: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB),
       q: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q),
+      m: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M),
+      plus: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.PLUS),
+      minus: this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.MINUS),
     };
   }
 
   public update(): void {
     const st = this.state;
 
-    // Keyboard movement
     let mx = 0;
     let my = 0;
 
@@ -73,7 +83,6 @@ export class InputManager {
       if (this.keys.s.isDown || this.keys.down.isDown) my += 1;
     }
 
-    // Merge touch input
     if (this.isMobile) {
       if (this.touchMoveX !== 0) mx = this.touchMoveX;
       if (this.touchMoveY !== 0) my = this.touchMoveY;
@@ -86,11 +95,33 @@ export class InputManager {
     st.openInventory = this.keys?.tab.isDown ?? false;
     st.cancel = false;
     st.pause = this.keys?.esc.isDown ?? false;
+
+    // Mouse tracking
+    const pointer = this.scene.input.activePointer;
+    const wasDown = this._mouseWasDown;
+    this.mouseDown = pointer.isDown;
+    this._mouseJustPressed = pointer.isDown && !wasDown;
+    this._mouseWasDown = pointer.isDown;
   }
 
-  /** Check if Q was just pressed (weapon switch). */
   public isQJustPressed(): boolean {
     return this.keys ? Phaser.Input.Keyboard.JustDown(this.keys.q) : false;
+  }
+
+  public isMJustPressed(): boolean {
+    return this.keys ? Phaser.Input.Keyboard.JustDown(this.keys.m) : false;
+  }
+
+  public isPlusJustPressed(): boolean {
+    return this.keys ? Phaser.Input.Keyboard.JustDown(this.keys.plus) : false;
+  }
+
+  public isMinusJustPressed(): boolean {
+    return this.keys ? Phaser.Input.Keyboard.JustDown(this.keys.minus) : false;
+  }
+
+  public isMouseJustPressed(): boolean {
+    return this._mouseJustPressed;
   }
 
   public static emptyState(): InputState {

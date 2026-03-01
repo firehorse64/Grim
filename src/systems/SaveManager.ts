@@ -65,6 +65,11 @@ export class SaveManager {
     npcNames: string[],
     windowStates: SaveData['windowStates'],
     maintenanceHp: SaveData['maintenanceHp'],
+    currentLocation: string = 'riverside',
+    destination: string | null = null,
+    travelProgress: number = 0,
+    fuel: number = 100,
+    trainSpeed: number = 80,
   ): SaveData {
     return {
       version: SAVE_VERSION,
@@ -77,6 +82,11 @@ export class SaveManager {
       npcNames,
       windowStates,
       maintenanceHp,
+      currentLocation,
+      destination,
+      travelProgress,
+      fuel,
+      trainSpeed,
     };
   }
 }

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { EventBus } from '../utils/EventBus';
 import { GameState, GameMode, Direction, WeaponType } from '../types/GameTypes';
-import { FurnitureType, PlacedFurniture } from '../types/TrainTypes';
+import { FurnitureType, PlacedFurniture, WindowState, DoorState } from '../types/TrainTypes';
 import { InputManager } from '../systems/InputManager';
 import { SurvivalManager } from '../systems/SurvivalManager';
 import { EnvironmentManager } from '../systems/EnvironmentManager';
@@ -19,6 +19,13 @@ import { Train } from '../train/Train';
 import { Player } from '../entities/Player';
 import { Survivor } from '../entities/npcs/Survivor';
 import { Zombie } from '../entities/zombies/Zombie';
+import { HudUpdateData } from './HudScene';
+import {
+  getLocation,
+  getRoute,
+  getReachableLocations,
+  MapLocation,
+} from '../data/LocationData';
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
@@ -31,11 +38,17 @@ import {
   EXIT_TRAIN_RANGE,
   MELEE_RANGE,
   MELEE_DAMAGE,
+  FUEL_PER_SCRAP,
+  TRAVEL_SPEED_FACTOR,
+  TRAIN_SPEED_DEFAULT,
+  TRAIN_SPEED_STEP,
+  TRAIN_SPEED_MIN,
+  TRAIN_SPEED_MAX,
+  TILE_SIZE,
 } from '../data/BalanceConstants';
 
 /**
  * GameScene – core gameplay for the survival train game.
- * Wires together all managers and systems.
  */
 export class GameScene extends Phaser.Scene {
   // State
@@ -74,8 +87,14 @@ export class GameScene extends Phaser.Scene {
   // Pause tracking
   private escWasDown: boolean = false;
 
-  // Exploration colliders (need to clean up)
+  // Exploration colliders
   private explorationColliders: Phaser.Physics.Arcade.Collider[] = [];
+
+  // Map/destination system
+  private currentLocationId: string = 'riverside';
+  private destinationId: string | null = null;
+  private travelProgress: number = 0; // 0-1
+  private travelDistance: number = 0; // total km for current route
 
   constructor() {
     super({ key: 'GameScene' });
@@ -88,6 +107,7 @@ export class GameScene extends Phaser.Scene {
     this.zombieSpawnTimer = 0;
     this.speechTimer = 0;
     this.explorationColliders = [];
+    this.travelProgress = 0;
   }
 
   create(): void {
@@ -219,6 +239,13 @@ export class GameScene extends Phaser.Scene {
     EventBus.on('daynight:phase-changed', (phase: string) => {
       this.showFloatingText(this.player.x, this.player.y - 30, phase);
     });
+    EventBus.on('map:set-destination', (destId: string) => {
+      this.setDestination(destId);
+    });
+    EventBus.on('train:out-of-fuel', () => {
+      this.gameMode = GameMode.STOPPED;
+      this.showFloatingText(this.player.x, this.player.y - 30, 'OUT OF FUEL!');
+    });
 
     this.emitHudUpdate();
   }
@@ -247,11 +274,27 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Map toggle
+    if (this.inputManager.isMJustPressed()) {
+      this.openMap();
+      return;
+    }
+
     // Weapon switch
     if (this.inputManager.isQJustPressed()) {
       this.combatManager.switchWeapon();
       const wep = this.combatManager.currentWeapon === WeaponType.RIFLE ? 'Rifle' : 'Melee';
       this.showFloatingText(this.player.x, this.player.y - 20, wep);
+    }
+
+    // Speed control (+/- keys)
+    if (this.inputManager.isPlusJustPressed()) {
+      this.train.speedUp();
+      this.showFloatingText(this.player.x, this.player.y - 20, `Speed: ${this.train.speed}`);
+    }
+    if (this.inputManager.isMinusJustPressed()) {
+      this.train.speedDown();
+      this.showFloatingText(this.player.x, this.player.y - 20, `Speed: ${this.train.speed}`);
     }
 
     // Survival
@@ -262,7 +305,12 @@ export class GameScene extends Phaser.Scene {
     this.player.handleInput(input);
     this.player.update(time, delta);
 
-    // Combat - attack
+    // Mouse aim and fire (left click)
+    if (this.inputManager.isMouseJustPressed()) {
+      this.handleMouseAttack();
+    }
+
+    // Keyboard attack
     if (this.player.isAttackJustPressed()) {
       this.handleAttack();
     }
@@ -279,10 +327,23 @@ export class GameScene extends Phaser.Scene {
     const camY = this.cameraManager.getScrollY();
     this.environmentManager.update(delta, this.train.isMoving, camY);
 
+    // Fuel consumption
+    if (this.train.isMoving) {
+      this.train.updateFuel(delta);
+      if (this.train.fuel <= 0) {
+        this.gameMode = GameMode.STOPPED;
+      }
+    }
+
+    // Travel progress
+    if (this.train.isMoving && this.destinationId) {
+      this.updateTravelProgress(delta);
+    }
+
     // Ambient zombies
     this.updateZombies(time, delta, camY);
 
-    // Train events (breach, maintenance, fire)
+    // Train events
     this.trainEventManager.update(delta, this.gameMode);
 
     // Exploration
@@ -314,13 +375,67 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------------
+  // Travel / Destination
+  // ------------------------------------------------------------------
+
+  private setDestination(destId: string): void {
+    const route = getRoute(this.currentLocationId, destId);
+    if (!route) return;
+    this.destinationId = destId;
+    this.travelDistance = route.distance;
+    this.travelProgress = 0;
+
+    const loc = getLocation(destId);
+    this.showFloatingText(this.player.x, this.player.y - 30, `Destination: ${loc?.name ?? destId}`);
+  }
+
+  private updateTravelProgress(delta: number): void {
+    if (!this.destinationId || this.travelDistance <= 0) return;
+    const dt = delta / 1000;
+    const speedFactor = this.train.speed / TRAIN_SPEED_DEFAULT;
+    const kmPerSec = TRAVEL_SPEED_FACTOR * speedFactor;
+    this.travelProgress += (kmPerSec * dt) / this.travelDistance;
+
+    if (this.travelProgress >= 1) {
+      this.travelProgress = 1;
+      this.arriveAtDestination();
+    }
+  }
+
+  private arriveAtDestination(): void {
+    if (!this.destinationId) return;
+    const loc = getLocation(this.destinationId);
+    this.currentLocationId = this.destinationId;
+    this.destinationId = null;
+    this.travelProgress = 0;
+    this.travelDistance = 0;
+
+    // Auto-stop at destination
+    this.train.stop();
+    this.gameMode = GameMode.STOPPED;
+
+    // Update brake panel prompt
+    const engineCar = this.train.getCar(0);
+    if (engineCar) {
+      const brake = engineCar.layout.furniture.find(f => f.type === FurnitureType.BRAKE_PANEL);
+      if (brake) brake.interactPrompt = 'Start Train';
+    }
+
+    this.showFloatingText(this.player.x, this.player.y - 30, `Arrived at ${loc?.name ?? 'destination'}`);
+    this.cameraManager.flash(0xffffff, 300);
+
+    if (this.currentLocationId === 'port-echo') {
+      this.showFloatingText(this.player.x, this.player.y - 50, 'You made it to the coast!');
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Combat
   // ------------------------------------------------------------------
 
   private handleAttack(): void {
     const attacked = this.combatManager.attack(this.player.x, this.player.y, this.player.facing);
     if (attacked && this.combatManager.currentWeapon === WeaponType.MELEE) {
-      // Check immediate melee hits
       const allZombies = this.getAllZombies();
       const hits = this.combatManager.checkMeleeHits(
         this.player.x, this.player.y, this.player.facing, allZombies,
@@ -328,6 +443,32 @@ export class GameScene extends Phaser.Scene {
       for (const hit of hits) {
         (hit.zombie as Zombie).takeDamage(hit.damage);
         this.showFloatingText(hit.zombie.x, hit.zombie.y - 10, `-${hit.damage}`);
+      }
+    }
+  }
+
+  private handleMouseAttack(): void {
+    const worldPointer = this.cameraManager.getWorldPointer();
+    const attacked = this.combatManager.attackAtTarget(
+      this.player.x, this.player.y,
+      worldPointer.x, worldPointer.y,
+    );
+    if (attacked) {
+      // Update player facing toward mouse
+      const dx = worldPointer.x - this.player.x;
+      const dy = worldPointer.y - this.player.y;
+      const dir = { x: dx / (Math.sqrt(dx * dx + dy * dy) || 1), y: dy / (Math.sqrt(dx * dx + dy * dy) || 1) };
+      this.player.facing = this.combatManager.vecToDirection(dir);
+
+      if (this.combatManager.currentWeapon === WeaponType.MELEE) {
+        const allZombies = this.getAllZombies();
+        const hits = this.combatManager.checkMeleeHitsDir(
+          this.player.x, this.player.y, dir, allZombies,
+        );
+        for (const hit of hits) {
+          (hit.zombie as Zombie).takeDamage(hit.damage);
+          this.showFloatingText(hit.zombie.x, hit.zombie.y - 10, `-${hit.damage}`);
+        }
       }
     }
   }
@@ -357,6 +498,17 @@ export class GameScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y;
 
+    // Block exit via connector sides while moving
+    if (this.train.isMoving && this.train.isInConnector(px, py)) {
+      // Constrain player to connector center
+      const trainBounds = this.train.getWorldBounds();
+      const centerX = trainBounds.x + trainBounds.w / 2;
+      const body = this.player.body as Phaser.Physics.Arcade.Body;
+      if (Math.abs(px - centerX) > 20) {
+        body.setVelocityX((centerX - px) * 5);
+      }
+    }
+
     // Check exit train (when stopped, near storage car exit door)
     if (this.gameMode === GameMode.STOPPED && !this.explorationManager.active) {
       const storageCar = this.train.getCar(2);
@@ -373,7 +525,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Check return to train (when exploring, near storage car exit door)
+    // Check return to train (when exploring)
     if (this.gameMode === GameMode.EXPLORING) {
       const storageCar = this.train.getCar(2);
       if (storageCar) {
@@ -389,7 +541,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Check resource pickups (exploration mode)
+    // Resource pickups (exploration)
     if (this.explorationManager.active) {
       const resource = this.explorationManager.checkPickup(px, py, PLAYER_INTERACT_RANGE);
       if (resource) {
@@ -405,7 +557,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Check NPC interaction
+    // NPC interaction
     const nearNpc = this.npcManager.findNearest(px, py);
     if (nearNpc && nearNpc.dist < PLAYER_INTERACT_RANGE + 10) {
       this.showInteractPrompt(nearNpc.npc.x, nearNpc.npc.y - 24, `[E] Talk to ${nearNpc.npc.npcName}`);
@@ -415,9 +567,8 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Check fire (extinguish)
+    // Fire extinguish
     if (this.trainEventManager.hasFires()) {
-      // Show prompt if near fire — handled by extinguishFire range check
       if (this.player.isInteractJustPressed()) {
         if (this.trainEventManager.extinguishFire(px, py, PLAYER_INTERACT_RANGE + 10)) {
           this.showFloatingText(px, py - 20, 'Fire out!');
@@ -426,12 +577,48 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Check furniture interaction
+    // Window interaction (stand near a window to open/close it)
     const currentCar = this.train.getCarAtPoint(px, py);
     if (currentCar) {
+      const nearWindow = currentCar.findNearestWindow(px, py, PLAYER_INTERACT_RANGE);
+      if (nearWindow) {
+        const action = nearWindow.open ? 'Close Window' : 'Open Window';
+        this.showInteractPrompt(px, py - 24, `[E] ${action}`);
+        if (this.player.isInteractJustPressed()) {
+          currentCar.toggleWindow(nearWindow);
+          this.showFloatingText(px, py - 20, nearWindow.open ? 'Window Opened' : 'Window Closed');
+        }
+        // Still check furniture below in case window is not the primary interaction
+      }
+
+      // Door interaction (car-end doors that can be closed/opened)
+      const nearDoor = currentCar.findNearestDoor(px, py, PLAYER_INTERACT_RANGE);
+      if (nearDoor && nearDoor.isEndDoor && !nearWindow) {
+        const action = nearDoor.open ? 'Close Door' : 'Open Door';
+        this.showInteractPrompt(px, py - 24, `[E] ${action}`);
+        if (this.player.isInteractJustPressed()) {
+          currentCar.toggleDoor(nearDoor);
+          this.showFloatingText(px, py - 20, nearDoor.open ? 'Door Opened' : 'Door Closed');
+        }
+        return;
+      }
+
+      // Furniture interaction
       const furniture = currentCar.findNearestFurniture(px, py, PLAYER_INTERACT_RANGE);
-      if (furniture) {
-        this.showInteractPrompt(px, py - 24, `[E] ${furniture.interactPrompt}`);
+      if (furniture && !nearWindow) {
+        // Show food info at stove
+        if (furniture.type === FurnitureType.COOKING_STOVE) {
+          const foodCount = this.inventoryManager.getCount('canned-food');
+          this.showInteractPrompt(px, py - 24, `[E] ${furniture.interactPrompt} (Food: ${foodCount})`);
+        } else if (furniture.type === FurnitureType.STORAGE_CRATE) {
+          const remaining = furniture.uses ?? 0;
+          this.showInteractPrompt(px, py - 24, `[E] ${furniture.interactPrompt} (Stores: ${remaining})`);
+        } else if (furniture.type === FurnitureType.BRAKE_PANEL) {
+          const speedText = `Speed: ${this.train.speed} | Fuel: ${Math.floor(this.train.fuel)}%`;
+          this.showInteractPrompt(px, py - 24, `[E] ${furniture.interactPrompt} | ${speedText}`);
+        } else {
+          this.showInteractPrompt(px, py - 24, `[E] ${furniture.interactPrompt}`);
+        }
         if (this.player.isInteractJustPressed()) {
           this.executeFurnitureAction(furniture);
         }
@@ -466,23 +653,25 @@ export class GameScene extends Phaser.Scene {
         if (furniture.uses !== undefined && furniture.uses > 0) {
           furniture.uses--;
           this.survivalManager.eat(EAT_RESTORE_AMOUNT);
-          this.showFloatingText(this.player.x, this.player.y - 20, `+${EAT_RESTORE_AMOUNT} Food`);
+          this.showFloatingText(this.player.x, this.player.y - 20, `+${EAT_RESTORE_AMOUNT} Food (${furniture.uses} left)`);
           if (furniture.uses <= 0) furniture.interactPrompt = 'Empty';
         } else {
           this.showFloatingText(this.player.x, this.player.y - 20, 'Empty...');
         }
         break;
 
-      case FurnitureType.COOKING_STOVE:
-        if (this.inventoryManager.hasItem('canned-food', 1)) {
+      case FurnitureType.COOKING_STOVE: {
+        const foodCount = this.inventoryManager.getCount('canned-food');
+        if (foodCount > 0) {
           this.inventoryManager.removeItem('canned-food', 1);
           const amount = Math.floor(EAT_RESTORE_AMOUNT * 1.5);
           this.survivalManager.eat(amount);
-          this.showFloatingText(this.player.x, this.player.y - 20, `+${amount} Cooked Meal`);
+          this.showFloatingText(this.player.x, this.player.y - 20, `+${amount} Cooked Meal (${foodCount - 1} food left)`);
         } else {
           this.showFloatingText(this.player.x, this.player.y - 20, 'Need food to cook');
         }
         break;
+      }
 
       case FurnitureType.BRAKE_PANEL:
         if (this.train.isMoving) {
@@ -493,6 +682,10 @@ export class GameScene extends Phaser.Scene {
         } else {
           if (this.explorationManager.active) {
             this.showFloatingText(this.player.x, this.player.y - 20, 'Return to train first!');
+          } else if (this.train.fuel <= 0) {
+            this.showFloatingText(this.player.x, this.player.y - 20, 'No fuel! Add scrap metal at workbench');
+          } else if (!this.destinationId) {
+            this.showFloatingText(this.player.x, this.player.y - 20, 'Set a destination on the map first! [M]');
           } else {
             this.train.start();
             this.gameMode = GameMode.TRAVELING;
@@ -519,7 +712,6 @@ export class GameScene extends Phaser.Scene {
 
       case FurnitureType.WORKBENCH:
         if (this.trainEventManager.needsRepair()) {
-          // Try repair the worst component
           const comps = this.trainEventManager.maintenance.sort((a, b) => a.hp - b.hp);
           if (comps.length > 0) {
             if (this.trainEventManager.repair(comps[0].id, this.inventoryManager)) {
@@ -529,8 +721,14 @@ export class GameScene extends Phaser.Scene {
             }
           }
         } else {
-          // Open crafting
-          this.openInventory('workbench');
+          // Try to add fuel if we have scrap metal and fuel is low
+          if (this.train.fuel < 80 && this.inventoryManager.hasItem('scrap-metal', 1)) {
+            this.inventoryManager.removeItem('scrap-metal', 1);
+            this.train.addFuel(FUEL_PER_SCRAP);
+            this.showFloatingText(this.player.x, this.player.y - 20, `+${FUEL_PER_SCRAP} Fuel`);
+          } else {
+            this.openInventory('workbench');
+          }
         }
         break;
 
@@ -543,7 +741,36 @@ export class GameScene extends Phaser.Scene {
           this.showFloatingText(this.player.x, this.player.y - 20, 'Need fertilizer...');
         }
         break;
+
+      case FurnitureType.MAP_BOARD:
+        this.openMap();
+        break;
+
+      case FurnitureType.LIGHT_SWITCH:
+        this.train.interiorLightsOn = !this.train.interiorLightsOn;
+        this.showFloatingText(this.player.x, this.player.y - 20,
+          this.train.interiorLightsOn ? 'Lights On' : 'Lights Off');
+        this.updateInteriorLighting();
+        break;
+
+      case FurnitureType.SPOTLIGHT:
+        this.train.headlightsOn = !this.train.headlightsOn;
+        this.showFloatingText(this.player.x, this.player.y - 20,
+          this.train.headlightsOn ? 'Headlights On' : 'Headlights Off');
+        break;
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Map
+  // ------------------------------------------------------------------
+
+  private openMap(): void {
+    this.scene.pause();
+    this.scene.launch('MapScene', {
+      currentLocation: this.currentLocationId,
+      destination: this.destinationId,
+    });
   }
 
   // ------------------------------------------------------------------
@@ -556,13 +783,11 @@ export class GameScene extends Phaser.Scene {
     const trainBounds = this.train.getWorldBounds();
     const result = this.explorationManager.generate(trainBounds);
 
-    // Add collisions with building walls
     for (const wallGroup of result.walls) {
       const c = this.physics.add.collider(this.player, wallGroup);
       this.explorationColliders.push(c);
     }
 
-    // Expand camera bounds
     const fullBounds = {
       x: Math.min(trainBounds.x, result.bounds.x),
       y: trainBounds.y,
@@ -571,18 +796,15 @@ export class GameScene extends Phaser.Scene {
     };
     this.cameraManager.setExplorationBounds(fullBounds);
 
-    // Move player outside the train
     const storageCar = this.train.getCar(2)!;
     const doorPos = storageCar.getFrontDoorPos();
     this.player.setPosition(doorPos.x, doorPos.y + 60);
 
     this.showFloatingText(this.player.x, this.player.y - 20, 'Exploring...');
 
-    // Try to recruit an NPC
     const recruited = this.npcManager.tryRecruit();
     if (recruited) {
       this.showFloatingText(this.player.x, this.player.y - 40, `${recruited.npcName} joined!`);
-      // Add collisions for new NPC
       this.npcManager.addCollisions(
         this.train.getAllWallBodies(),
         this.train.getAllFurnitureBodies(),
@@ -593,19 +815,15 @@ export class GameScene extends Phaser.Scene {
   private exitExploration(): void {
     this.gameMode = GameMode.STOPPED;
 
-    // Clean up exploration
     this.explorationManager.cleanup();
 
-    // Remove exploration colliders
     for (const c of this.explorationColliders) {
       c.destroy();
     }
     this.explorationColliders = [];
 
-    // Reset camera bounds to train
     this.cameraManager.setExplorationBounds(this.train.getWorldBounds());
 
-    // Move player back inside
     const storageCar = this.train.getCar(2)!;
     const doorPos = storageCar.getFrontDoorPos();
     this.player.setPosition(doorPos.x, doorPos.y - 20);
@@ -631,7 +849,6 @@ export class GameScene extends Phaser.Scene {
   // ------------------------------------------------------------------
 
   private updateZombies(time: number, delta: number, cameraY: number): void {
-    // Adjust spawn rate by day/night
     const spawnInterval = AMBIENT_ZOMBIE_SPAWN_INTERVAL / this.dayNightManager.getZombieMultiplier();
 
     this.zombieSpawnTimer += delta;
@@ -640,7 +857,9 @@ export class GameScene extends Phaser.Scene {
       this.spawnAmbientZombie(cameraY);
     }
 
-    const scrollSpeed = this.train.isMoving ? TRAIN_SCROLL_SPEED : 0;
+    const scrollSpeed = this.train.isMoving ? this.train.speed : 0;
+    const trainBounds = this.train.getWorldBounds();
+
     for (let i = this.zombies.length - 1; i >= 0; i--) {
       const z = this.zombies[i];
       if (!z.isAlive()) {
@@ -651,32 +870,41 @@ export class GameScene extends Phaser.Scene {
 
       z.updateZombie(time, delta, scrollSpeed);
 
+      // Prevent ambient zombies from clipping into train
+      if (z.x > trainBounds.x - 10 && z.x < trainBounds.x + trainBounds.w + 10 &&
+          z.y > trainBounds.y && z.y < trainBounds.y + trainBounds.h) {
+        // Push zombie away from train
+        if (z.x < trainBounds.x + trainBounds.w / 2) {
+          z.x = trainBounds.x - 12;
+        } else {
+          z.x = trainBounds.x + trainBounds.w + 12;
+        }
+      }
+
       if (z.y > cameraY + GAME_HEIGHT || z.y < cameraY - GAME_HEIGHT) {
         z.destroy();
         this.zombies.splice(i, 1);
       }
     }
 
-    // Check zombie-player collision (breach zombies can hurt player)
+    // Breach zombies damage player
     for (const z of this.trainEventManager.getBreachZombies()) {
       if (!z.isAlive()) continue;
       z.updateZombie(time, delta, 0, this.player.x, this.player.y);
       const dx = this.player.x - z.x;
       const dy = this.player.y - z.y;
-      if (dx * dx + dy * dy < 400) { // ~20px
+      if (dx * dx + dy * dy < 400) {
         const dmg = z.tryAttack();
         if (dmg > 0) {
           this.player.survival.health = Math.max(0, this.player.survival.health - dmg);
           this.cameraManager.shake(100, 0.005);
           this.showFloatingText(this.player.x, this.player.y - 15, `-${dmg}`);
-          if (this.player.survival.health <= 0) {
-            this.gameOver();
-          }
+          if (this.player.survival.health <= 0) this.gameOver();
         }
       }
     }
 
-    // Exploration zombies can also hurt player
+    // Exploration zombies
     if (this.explorationManager.active) {
       for (const z of this.explorationManager.getZombies()) {
         if (!z.isAlive()) continue;
@@ -688,9 +916,7 @@ export class GameScene extends Phaser.Scene {
             this.player.survival.health = Math.max(0, this.player.survival.health - dmg);
             this.cameraManager.shake(100, 0.005);
             this.showFloatingText(this.player.x, this.player.y - 15, `-${dmg}`);
-            if (this.player.survival.health <= 0) {
-              this.gameOver();
-            }
+            if (this.player.survival.health <= 0) this.gameOver();
           }
         }
       }
@@ -729,6 +955,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------------
+  // Interior lighting
+  // ------------------------------------------------------------------
+
+  private updateInteriorLighting(): void {
+    const alpha = this.train.interiorLightsOn ? 1.0 : 0.4;
+    for (const car of this.train.cars) {
+      car.floorContainer.setAlpha(alpha);
+      car.furnitureContainer.setAlpha(alpha);
+    }
+  }
+
+  // ------------------------------------------------------------------
   // HUD & game state
   // ------------------------------------------------------------------
 
@@ -736,7 +974,11 @@ export class GameScene extends Phaser.Scene {
     const s = this.player.survival;
     const eng = this.trainEventManager.getComponent('engine');
     const brk = this.trainEventManager.getComponent('brake');
-    EventBus.emit('hud:update', {
+
+    const destLoc = this.destinationId ? getLocation(this.destinationId) : null;
+    const curLoc = getLocation(this.currentLocationId);
+
+    const data: HudUpdateData = {
       hunger: s.hunger,
       energy: s.energy,
       health: s.health,
@@ -748,7 +990,13 @@ export class GameScene extends Phaser.Scene {
       brakeHp: brk?.hp ?? 100,
       hasFire: this.trainEventManager.hasFires(),
       npcCount: this.npcManager.getCount(),
-    });
+      fuel: this.train.fuel,
+      trainSpeed: this.train.speed,
+      destination: destLoc?.name ?? null,
+      travelProgress: this.travelProgress,
+      currentLocation: curLoc?.name ?? 'Unknown',
+    };
+    EventBus.emit('hud:update', data);
   }
 
   private gameOver(): void {
@@ -760,7 +1008,6 @@ export class GameScene extends Phaser.Scene {
     this.scene.start('GameOverScene', { message: 'You didn\'t survive...' });
   }
 
-  /** Called by PauseScene for save & quit. */
   public saveGame(): void {
     const dnData = this.dayNightManager.serialize();
     const saveData = SaveManager.createSaveData(
@@ -771,12 +1018,17 @@ export class GameScene extends Phaser.Scene {
       dnData.dayTime,
       this.train.isMoving,
       this.npcManager.getNames(),
-      [], // windowStates — simplified for now
+      [],
       {
         engine: this.trainEventManager.getComponent('engine')?.hp ?? 100,
         brake: this.trainEventManager.getComponent('brake')?.hp ?? 100,
         wheels: this.trainEventManager.getComponent('wheels')?.hp ?? 100,
       },
+      this.currentLocationId,
+      this.destinationId,
+      this.travelProgress,
+      this.train.fuel,
+      this.train.speed,
     );
     this.saveManager.save(saveData);
   }
