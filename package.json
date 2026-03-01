@@ -12,11 +12,17 @@
     "type": "git",
     "url": "http://local_proxy@127.0.0.1:51438/git/firehorse64/Grim"
   },
-  "keywords": ["game", "phaser", "zombie", "survival"],
+  "keywords": [
+    "game",
+    "phaser",
+    "zombie",
+    "survival"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "phaser": "^3.90.0"
+    "@types/three": "^0.183.1",
+    "three": "^0.183.2"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
