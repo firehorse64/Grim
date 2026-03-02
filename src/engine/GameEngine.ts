@@ -1,6 +1,5 @@
 /**
- * Core 3D game engine — sets up Three.js, manages game loop,
- * and orchestrates all game systems.
+ * Core 3D game engine — Three.js setup, game loop, all systems.
  */
 import * as THREE from 'three';
 import { EventBus } from '../utils/EventBus';
@@ -10,11 +9,14 @@ import { TrainRenderer, CAR_WIDTH, CAR_LENGTH, CONNECTOR_LENGTH, FLOOR_Y } from 
 import { EnvironmentRenderer } from '../rendering/EnvironmentRenderer';
 import {
   CharacterMesh, RagdollPart, createPlayer, createZombie, createNPC,
-  animateWalk, animateMeleeSwing, animateZombieLurch, createRagdoll,
-  createBullet, createPickupMesh,
+  animateWalk, animateMeleeSwing, animateZombieLurch, animateZombieAttack,
+  animateWindowCrawl, createRagdoll, createBullet, createPickupMesh,
 } from '../rendering/CharacterRenderer';
 import { HudOverlay, HudData } from '../ui/HudOverlay';
-import { showMainMenu, showPauseMenu, showGameOver, showInventory, showMap, showVictory } from '../ui/ScreenOverlays';
+import {
+  showMainMenu, showPauseMenu, showGameOver,
+  showInventory, showMap, showVictory,
+} from '../ui/ScreenOverlays';
 import { SurvivalManager } from '../systems/SurvivalManager';
 import { InventoryManager } from '../systems/InventoryManager';
 import { CraftingManager } from '../systems/CraftingManager';
@@ -40,9 +42,8 @@ type GamePhase = 'MENU' | 'PLAYING' | 'PAUSED' | 'GAMEOVER';
 type GameMode = 'TRAVELING' | 'STOPPED' | 'EXPLORING';
 type TimeOfDay = 'DAWN' | 'DAY' | 'DUSK' | 'NIGHT';
 
-// Character feet at local y=0, so group.y = surface height
-const FLOOR_SURFACE_Y = FLOOR_Y + 0.05; // top of train floor
-const GROUND_Y = 0; // ground level
+const FLOOR_SURFACE_Y = FLOOR_Y + 0.05;
+const GROUND_Y = 0;
 
 interface ZombieEntity {
   mesh: CharacterMesh;
@@ -70,27 +71,23 @@ interface NPCEntity {
 }
 
 export class GameEngine {
-  // Three.js core
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
 
-  // Lights
   private ambientLight!: THREE.AmbientLight;
   private directionalLight!: THREE.DirectionalLight;
 
-  // Renderers
   private trainRenderer!: TrainRenderer;
   private envRenderer!: EnvironmentRenderer;
 
-  // Player
   private playerMesh!: CharacterMesh;
   private playerPos = new THREE.Vector3(0, FLOOR_SURFACE_Y, 6);
   private playerFacing = new THREE.Vector3(0, 0, 1);
   private playerSpeedMult = 1.0;
+  private isSprinting = false;
 
-  // Game state
   private phase: GamePhase = 'MENU';
   private mode: GameMode = 'STOPPED';
   private survival!: SurvivalState;
@@ -98,69 +95,58 @@ export class GameEngine {
   private inventory!: InventoryManager;
   private crafting!: CraftingManager;
 
-  // Train state
   private trainMoving = false;
   private trainSpeed = TRAIN_SPEED_DEFAULT;
   private fuel = FUEL_MAX;
-  private headlightsOn = false;
   private interiorLightsOn = true;
 
-  // Maintenance
   private engineHp = 100;
   private brakeHp = 100;
 
-  // Travel
   private currentLocationId = 'riverside';
-  private destinationId: string | null = null;
+  private destinationId: string | null = 'millfield'; // auto-set first destination
   private travelProgress = 0;
   private travelDistance = 0;
 
-  // Day/night
   private timeOfDay: TimeOfDay = 'DAY';
   private dayTimer = 0;
 
-  // Combat
   private currentWeapon: WeaponType = WeaponType.RIFLE;
   private lastFireTime = 0;
   private lastMeleeTime = 0;
   private bullets: Bullet[] = [];
 
-  // Zombies
   private zombies: ZombieEntity[] = [];
   private zombieSpawnTimer = 0;
 
-  // Ragdoll parts
   private ragdollParts: RagdollPart[] = [];
 
-  // NPCs
   private npcs: NPCEntity[] = [];
 
-  // Exploration
   private explorationActive = false;
   private explorationPickups: { mesh: THREE.Mesh; type: string; name: string; collected: boolean }[] = [];
 
-  // Input & audio
   private input!: InputManager3D;
   private audio!: AudioEngine;
   private hud!: HudOverlay;
 
-  // Raycasting for mouse aim
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_SURFACE_Y);
 
-  // Camera orbit
-  private cameraOrbitAngle = 0; // radians around Y axis
-  private cameraOrbitPitch = 0.6; // radians from horizontal (0.6 ~ 34 degrees)
+  private cameraOrbitAngle = 0;
+  private cameraOrbitPitch = 0.6;
   private cameraDistance = 12;
   private cameraHeight = 10;
 
-  // UI state
   private uiOpen = false;
+
+  // Occlusion
+  private occludedMeshes = new Set<THREE.Mesh>();
+  private occludableCache: THREE.Mesh[] | null = null;
 
   constructor() {}
 
   public async init(): Promise<void> {
-    // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -171,16 +157,13 @@ export class GameEngine {
     const container = document.getElementById('game-container')!;
     container.appendChild(this.renderer.domElement);
 
-    // Scene
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0x8899aa, 0.008);
 
-    // Camera — third person, slightly elevated
     this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 500);
     this.camera.position.set(0, 12, -4);
     this.camera.lookAt(0, FLOOR_Y, 10);
 
-    // Lights
     this.ambientLight = new THREE.AmbientLight(0x667788, 0.6);
     this.scene.add(this.ambientLight);
 
@@ -196,40 +179,28 @@ export class GameEngine {
     this.directionalLight.shadow.camera.bottom = -20;
     this.scene.add(this.directionalLight);
 
-    // Environment
     this.envRenderer = new EnvironmentRenderer();
     this.envRenderer.create();
     this.scene.add(this.envRenderer.group);
 
-    // Train
     this.trainRenderer = new TrainRenderer();
     this.trainRenderer.create();
     this.scene.add(this.trainRenderer.group);
 
-    // Player
     this.playerMesh = createPlayer();
     this.playerPos.set(0, FLOOR_SURFACE_Y, CAR_LENGTH / 2);
     this.playerMesh.group.position.copy(this.playerPos);
     this.scene.add(this.playerMesh.group);
 
-    // Input
     this.input = new InputManager3D(this.renderer.domElement);
-
-    // Audio
     this.audio = new AudioEngine();
     this.audio.create();
-
-    // HUD
     this.hud = new HudOverlay();
     this.hud.create();
 
-    // NPC — Sarah starts in living car
     this.spawnNPC('Sarah', 0, CAR_LENGTH + CONNECTOR_LENGTH + CAR_LENGTH / 2);
 
-    // Resize handler
     window.addEventListener('resize', () => this.onResize());
-
-    // Event listeners
     EventBus.on('survival:death', () => this.gameOver());
     EventBus.on('inventory:use-food', () => {
       this.survivalManager.eat(EAT_RESTORE_AMOUNT);
@@ -240,15 +211,18 @@ export class GameEngine {
       this.hud.showFloatingText('+25 Health');
     });
 
-    // Show main menu
+    // Auto-set initial destination
+    const initRoute = getRoute('riverside', 'millfield');
+    if (initRoute) {
+      this.travelDistance = initRoute.distance;
+    }
+
     this.showMenu();
   }
 
   private showMenu(): void {
     this.phase = 'MENU';
-    showMainMenu(
-      () => this.startNewGame(),
-    );
+    showMainMenu(() => this.startNewGame());
   }
 
   private startNewGame(): void {
@@ -260,49 +234,41 @@ export class GameEngine {
     this.engineHp = 100;
     this.brakeHp = 100;
     this.currentLocationId = 'riverside';
-    this.destinationId = null;
+    this.destinationId = 'millfield';
     this.travelProgress = 0;
+    const initRoute = getRoute('riverside', 'millfield');
+    this.travelDistance = initRoute?.distance ?? 30;
     this.timeOfDay = 'DAY';
     this.dayTimer = 0;
     this.currentWeapon = WeaponType.RIFLE;
     this.explorationActive = false;
     this.cameraOrbitAngle = 0;
+    this.interiorLightsOn = true;
+    this.trainRenderer.setInteriorLights(true);
 
-    // Survival
     this.survival = { hunger: HUNGER_MAX, energy: ENERGY_MAX, health: PLAYER_MAX_HP };
     this.survivalManager = new SurvivalManager(this.survival);
-
-    // Inventory
     this.inventory = new InventoryManager();
     this.inventory.create();
-
-    // Crafting
     this.crafting = new CraftingManager();
     this.crafting.create();
 
-    // Reset player pos — on top of train floor
     this.playerPos.set(0, FLOOR_SURFACE_Y, CAR_LENGTH / 2);
-
     this.audio.resume();
-    this.hud.showFloatingText('Riverside Station — Set a destination on the map [M]');
+    this.hud.showFloatingText('Riverside Station — Destination: Millfield. Start the train at the brake panel!');
 
-    // Start game loop
     if (!this.clock.running) {
       this.clock.start();
       this.animate();
     }
   }
 
-  // ===========================================
-  // GAME LOOP
-  // ===========================================
+  // ===== GAME LOOP =====
 
   private animate = (): void => {
     requestAnimationFrame(this.animate);
-
-    const dt = Math.min(this.clock.getDelta(), 0.05); // cap dt
+    const dt = Math.min(this.clock.getDelta(), 0.05);
     const dtMs = dt * 1000;
-
     this.input.update();
 
     if (this.phase === 'PLAYING' && !this.uiOpen) {
@@ -310,28 +276,25 @@ export class GameEngine {
     }
 
     this.updateRagdolls(dt);
+    this.updateOcclusion();
     this.updateCamera(dt);
+    this.updateFloatingLabels();
     this.renderer.render(this.scene, this.camera);
   };
 
   private updateGame(dt: number, dtMs: number): void {
     const inp = this.input.state;
 
-    // Pause
     if (inp.pause) {
       this.phase = 'PAUSED';
       showPauseMenu(() => { this.phase = 'PLAYING'; });
       return;
     }
-
-    // Inventory
     if (inp.openInventory) {
       this.uiOpen = true;
       showInventory(this.inventory, this.crafting, () => { this.uiOpen = false; });
       return;
     }
-
-    // Map
     if (inp.openMap) {
       this.uiOpen = true;
       showMap(this.currentLocationId, this.destinationId, (destId) => {
@@ -339,14 +302,15 @@ export class GameEngine {
       }, () => { this.uiOpen = false; });
       return;
     }
+    if (inp.openTrainMap) {
+      this.showTrainMap();
+      return;
+    }
 
-    // Weapon switch
     if (inp.switchWeapon) {
       this.currentWeapon = this.currentWeapon === WeaponType.RIFLE ? WeaponType.MELEE : WeaponType.RIFLE;
       this.hud.showFloatingText(this.currentWeapon === WeaponType.RIFLE ? 'Rifle' : 'Melee');
     }
-
-    // Speed control
     if (inp.speedUp) {
       this.trainSpeed = Math.min(TRAIN_SPEED_MAX, this.trainSpeed + TRAIN_SPEED_STEP);
       this.hud.showFloatingText(`Speed: ${this.trainSpeed}`);
@@ -356,32 +320,27 @@ export class GameEngine {
       this.hud.showFloatingText(`Speed: ${this.trainSpeed}`);
     }
 
-    // Camera rotation (right-click drag)
-    if (inp.cameraDeltaX !== 0) {
-      this.cameraOrbitAngle += inp.cameraDeltaX * 0.004;
-    }
-    if (inp.cameraDeltaY !== 0) {
-      this.cameraOrbitPitch = Math.max(0.15, Math.min(1.2, this.cameraOrbitPitch + inp.cameraDeltaY * 0.004));
-    }
+    // Camera: right-click drag
+    if (inp.cameraDeltaX !== 0) this.cameraOrbitAngle += inp.cameraDeltaX * 0.004;
+    if (inp.cameraDeltaY !== 0) this.cameraOrbitPitch = Math.max(0.15, Math.min(1.2, this.cameraOrbitPitch + inp.cameraDeltaY * 0.004));
+    // Camera: keyboard rotation
+    if (inp.cameraRotateLeft) this.cameraOrbitAngle -= 2.0 * dt;
+    if (inp.cameraRotateRight) this.cameraOrbitAngle += 2.0 * dt;
 
-    // Survival
+    // Sprint
+    this.isSprinting = inp.sprint && (inp.moveX !== 0 || inp.moveZ !== 0);
+
     this.survivalManager.update(dtMs);
     this.playerSpeedMult = this.survivalManager.getSpeedMultiplier();
 
-    // Player movement
     this.updatePlayer(dt, inp);
 
-    // Mouse attack
     if (inp.mouseJustPressed) this.handleMouseAttack();
     if (inp.attack) this.handleAttack();
 
-    // Bullets
     this.updateBullets(dt);
-
-    // Interactions
     this.handleInteractions(inp);
 
-    // Train fuel
     if (this.trainMoving) {
       const fuelUse = FUEL_CONSUMPTION_PER_SEC * (this.trainSpeed / TRAIN_SPEED_DEFAULT) * dt;
       this.fuel = Math.max(0, this.fuel - fuelUse);
@@ -391,55 +350,38 @@ export class GameEngine {
         this.hud.showFloatingText('OUT OF FUEL!');
       }
     }
+    if (this.trainMoving && this.destinationId) this.updateTravel(dt);
+    if (this.trainMoving) this.envRenderer.scrollEnvironment(this.trainSpeed * 0.02 * dt);
 
-    // Travel progress
-    if (this.trainMoving && this.destinationId) {
-      this.updateTravel(dt);
-    }
-
-    // Environment scrolling
-    if (this.trainMoving) {
-      this.envRenderer.scrollEnvironment(this.trainSpeed * 0.02 * dt);
-    }
-
-    // Maintenance degradation
     if (this.trainMoving) {
       this.engineHp = Math.max(0, this.engineHp - ENGINE_DEGRADE_PER_SEC * dt);
       this.brakeHp = Math.max(0, this.brakeHp - BRAKE_DEGRADE_PER_SEC * dt);
-      if (this.engineHp < MAINTENANCE_WARNING_THRESHOLD) {
-        this.hud.showFloatingText('Engine needs repair!');
-      }
     }
 
-    // Zombies
     this.updateZombies(dt, dtMs);
-
-    // NPCs
     this.updateNPCs(dt);
-
-    // Day/night
     this.updateDayNight(dtMs);
 
-    // Connector restriction
     if (this.trainMoving && this.trainRenderer.isInConnector(this.playerPos.x, this.playerPos.z)) {
       this.playerPos.x *= 0.9;
     }
 
-    // Roof transparency
     this.updateRoofVisibility();
-
-    // Emit HUD
     this.emitHud();
   }
 
-  // ===========================================
-  // PLAYER
-  // ===========================================
+  // ===== PLAYER =====
 
   private updatePlayer(dt: number, inp: InputManager3D['state']): void {
-    const speed = PLAYER_SPEED * this.playerSpeedMult * dt * 0.02;
+    const sprintMult = this.isSprinting ? 1.8 : 1.0;
+    const speed = PLAYER_SPEED * this.playerSpeedMult * sprintMult * dt * 0.02;
 
-    // Transform input relative to camera orbit angle
+    // Sprint drains energy
+    if (this.isSprinting) {
+      this.survival.energy = Math.max(0, this.survival.energy - 0.3 * dt * 60);
+      if (this.survival.energy <= 0) this.isSprinting = false;
+    }
+
     const cos = Math.cos(this.cameraOrbitAngle);
     const sin = Math.sin(this.cameraOrbitAngle);
     const rawX = -inp.moveX;
@@ -447,33 +389,29 @@ export class GameEngine {
     let dx = rawX * cos - rawZ * sin;
     let dz = rawX * sin + rawZ * cos;
 
-    // Normalize diagonal
     if (dx !== 0 && dz !== 0) {
       const mag = Math.sqrt(dx * dx + dz * dz);
-      dx = (dx / mag);
-      dz = (dz / mag);
+      dx /= mag;
+      dz /= mag;
     }
     dx *= speed;
     dz *= speed;
 
     const newX = this.playerPos.x + dx;
     const newZ = this.playerPos.z + dz;
-
-    // Clamp to train interior (when not exploring)
     const bounds = this.trainRenderer.getBounds();
     const padding = 0.3;
+
     if (!this.explorationActive) {
       this.playerPos.x = Math.max(bounds.minX + padding, Math.min(bounds.maxX - padding, newX));
       this.playerPos.z = Math.max(bounds.minZ + padding, Math.min(bounds.maxZ - padding, newZ));
       this.playerPos.y = FLOOR_SURFACE_Y;
     } else {
-      // Wider bounds for exploration
       this.playerPos.x = Math.max(-30, Math.min(30, newX));
       this.playerPos.z = Math.max(bounds.minZ - 20, Math.min(bounds.maxZ + 30, newZ));
       this.playerPos.y = GROUND_Y;
     }
 
-    // Update facing
     if (dx !== 0 || dz !== 0) {
       this.playerFacing.set(dx, 0, dz).normalize();
       this.playerMesh.group.rotation.y = Math.atan2(dx, dz);
@@ -484,18 +422,13 @@ export class GameEngine {
     animateWalk(this.playerMesh, moveSpeed * 20, dt);
   }
 
-  // ===========================================
-  // COMBAT
-  // ===========================================
+  // ===== COMBAT =====
 
   private handleAttack(): void {
     const now = performance.now();
     if (this.currentWeapon === WeaponType.RIFLE) {
       if (now - this.lastFireTime < RIFLE_FIRE_RATE_MS) return;
-      if (!this.inventory.useAmmo()) {
-        this.hud.showFloatingText('No ammo!');
-        return;
-      }
+      if (!this.inventory.useAmmo()) { this.hud.showFloatingText('No ammo!'); return; }
       this.lastFireTime = now;
       this.fireRifle(this.playerFacing.clone());
       this.audio.playShot();
@@ -508,7 +441,6 @@ export class GameEngine {
   }
 
   private handleMouseAttack(): void {
-    // Raycast to ground plane to find aim direction
     const mouse = new THREE.Vector2(
       (this.input.state.mouseX / window.innerWidth) * 2 - 1,
       -(this.input.state.mouseY / window.innerHeight) * 2 + 1,
@@ -516,27 +448,26 @@ export class GameEngine {
     this.raycaster.setFromCamera(mouse, this.camera);
     const target = new THREE.Vector3();
     this.raycaster.ray.intersectPlane(this.groundPlane, target);
+    if (!target) return;
 
-    if (target) {
-      const dir = new THREE.Vector3().subVectors(target, this.playerPos).normalize();
-      dir.y = 0;
-      dir.normalize();
-      this.playerFacing.copy(dir);
-      this.playerMesh.group.rotation.y = Math.atan2(dir.x, dir.z);
+    const dir = new THREE.Vector3().subVectors(target, this.playerPos).normalize();
+    dir.y = 0;
+    dir.normalize();
+    this.playerFacing.copy(dir);
+    this.playerMesh.group.rotation.y = Math.atan2(dir.x, dir.z);
 
-      const now = performance.now();
-      if (this.currentWeapon === WeaponType.RIFLE) {
-        if (now - this.lastFireTime < RIFLE_FIRE_RATE_MS) return;
-        if (!this.inventory.useAmmo()) return;
-        this.lastFireTime = now;
-        this.fireRifle(dir);
-        this.audio.playShot();
-      } else {
-        if (now - this.lastMeleeTime < MELEE_COOLDOWN_MS) return;
-        this.lastMeleeTime = now;
-        this.meleeAttack();
-        this.audio.playMelee();
-      }
+    const now = performance.now();
+    if (this.currentWeapon === WeaponType.RIFLE) {
+      if (now - this.lastFireTime < RIFLE_FIRE_RATE_MS) return;
+      if (!this.inventory.useAmmo()) return;
+      this.lastFireTime = now;
+      this.fireRifle(dir);
+      this.audio.playShot();
+    } else {
+      if (now - this.lastMeleeTime < MELEE_COOLDOWN_MS) return;
+      this.lastMeleeTime = now;
+      this.meleeAttack();
+      this.audio.playMelee();
     }
   }
 
@@ -544,48 +475,30 @@ export class GameEngine {
     const bulletMesh = createBullet();
     bulletMesh.position.copy(this.playerPos).add(new THREE.Vector3(0, 0.5, 0));
     this.scene.add(bulletMesh);
-    this.bullets.push({
-      mesh: bulletMesh,
-      dir: dir.clone(),
-      speed: BULLET_SPEED * 0.03,
-      life: 2000,
-      damage: RIFLE_DAMAGE,
-    });
+    this.bullets.push({ mesh: bulletMesh, dir: dir.clone(), speed: BULLET_SPEED * 0.03, life: 2000, damage: RIFLE_DAMAGE });
   }
 
   private meleeAttack(): void {
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
-    const range = 1.5; // generous melee range in 3D units
-
-    // Visual feedback — swing animation
     animateMeleeSwing(this.playerMesh);
 
-    let hitAny = false;
     for (const z of this.zombies) {
       if (!z.alive) continue;
       const zPos = z.mesh.group.position;
       const dist = distance(px, pz, zPos.x, zPos.z);
-      if (dist < range) {
-        // Check facing direction (within ~120 degree cone)
-        const toZombie = new THREE.Vector3(zPos.x - px, 0, zPos.z - pz).normalize();
-        const dot = this.playerFacing.dot(toZombie);
-        if (dot > -0.2) { // generous angle
+      if (dist < 1.5) {
+        const toZ = new THREE.Vector3(zPos.x - px, 0, zPos.z - pz).normalize();
+        if (this.playerFacing.dot(toZ) > -0.2) {
           z.hp -= MELEE_DAMAGE;
-          // Knockback
-          const knockDir = toZombie.clone().multiplyScalar(3);
-          knockDir.y = 1;
-          z.velocity.add(knockDir);
+          const knock = toZ.clone().multiplyScalar(3);
+          knock.y = 1;
+          z.velocity.add(knock);
           this.hud.showFloatingText(`-${MELEE_DAMAGE}`);
-          if (z.hp <= 0) this.killZombie(z, toZombie.multiplyScalar(5));
+          if (z.hp <= 0) this.killZombie(z, toZ.multiplyScalar(5));
           this.audio.playHit();
-          hitAny = true;
         }
       }
-    }
-
-    if (!hitAny) {
-      // Miss — still show the swing
     }
   }
 
@@ -594,18 +507,14 @@ export class GameEngine {
       const b = this.bullets[i];
       b.mesh.position.addScaledVector(b.dir, b.speed * dt * 60);
       b.life -= dt * 1000;
-
-      // Check hits
       let hit = false;
       for (const z of this.zombies) {
         if (!z.alive) continue;
-        const dist = b.mesh.position.distanceTo(z.mesh.group.position);
-        if (dist < 0.5) {
+        if (b.mesh.position.distanceTo(z.mesh.group.position) < 0.5) {
           z.hp -= b.damage;
-          // Knockback from bullet
-          const knockDir = b.dir.clone().multiplyScalar(2);
-          knockDir.y = 0.5;
-          z.velocity.add(knockDir);
+          const knock = b.dir.clone().multiplyScalar(2);
+          knock.y = 0.5;
+          z.velocity.add(knock);
           this.hud.showFloatingText(`-${b.damage}`);
           if (z.hp <= 0) this.killZombie(z, b.dir.clone().multiplyScalar(5));
           this.audio.playHit();
@@ -613,7 +522,6 @@ export class GameEngine {
           break;
         }
       }
-
       if (hit || b.life <= 0) {
         this.scene.remove(b.mesh);
         this.bullets.splice(i, 1);
@@ -621,49 +529,34 @@ export class GameEngine {
     }
   }
 
-  // ===========================================
-  // INTERACTIONS
-  // ===========================================
+  // ===== INTERACTIONS =====
 
   private handleInteractions(inp: InputManager3D['state']): void {
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
-    const interactRange = PLAYER_INTERACT_RANGE * 0.03;
+    const range = PLAYER_INTERACT_RANGE * 0.03;
     let prompted = false;
 
-    // Check exit/enter train (when stopped, near end of storage car)
     const storageDoorZ = (CAR_LENGTH + CONNECTOR_LENGTH) * 2 + CAR_LENGTH;
     if (this.mode === 'STOPPED' && !this.explorationActive) {
-      const distToDoor = distance(px, pz, 0, storageDoorZ);
-      if (distToDoor < EXIT_TRAIN_RANGE * 0.04) {
+      if (distance(px, pz, 0, storageDoorZ) < EXIT_TRAIN_RANGE * 0.04) {
         this.hud.showInteractPrompt('[E] Exit Train');
         prompted = true;
-        if (inp.interact) {
-          this.enterExploration();
-          return;
-        }
+        if (inp.interact) { this.enterExploration(); return; }
       }
     }
-
-    // Return to train
     if (this.explorationActive) {
-      const distToDoor = distance(px, pz, 0, storageDoorZ);
-      if (distToDoor < EXIT_TRAIN_RANGE * 0.06) {
+      if (distance(px, pz, 0, storageDoorZ) < EXIT_TRAIN_RANGE * 0.06) {
         this.hud.showInteractPrompt('[E] Return to Train');
         prompted = true;
-        if (inp.interact) {
-          this.exitExploration();
-          return;
-        }
+        if (inp.interact) { this.exitExploration(); return; }
       }
     }
 
-    // Exploration pickups
     if (this.explorationActive) {
       for (const pickup of this.explorationPickups) {
         if (pickup.collected) continue;
-        const d = distance(px, pz, pickup.mesh.position.x, pickup.mesh.position.z);
-        if (d < interactRange) {
+        if (distance(px, pz, pickup.mesh.position.x, pickup.mesh.position.z) < range) {
           this.hud.showInteractPrompt(`[E] Pick up ${pickup.name}`);
           prompted = true;
           if (inp.interact) {
@@ -678,9 +571,8 @@ export class GameEngine {
       }
     }
 
-    // Window repair interaction
     if (!this.explorationActive) {
-      const nearWin = this.trainRenderer.getNearestBrokenWindow(px, pz, interactRange * 1.5);
+      const nearWin = this.trainRenderer.getNearestBrokenWindow(px, pz, range * 1.5);
       if (nearWin) {
         this.hud.showInteractPrompt('[E] Repair Window');
         prompted = true;
@@ -691,34 +583,25 @@ export class GameEngine {
       }
     }
 
-    // NPC interaction
     for (const npc of this.npcs) {
-      const d = distance(px, pz, npc.mesh.group.position.x, npc.mesh.group.position.z);
-      if (d < interactRange * 1.5) {
+      if (distance(px, pz, npc.mesh.group.position.x, npc.mesh.group.position.z) < range * 1.5) {
         this.hud.showInteractPrompt(`[E] Talk to ${npc.name}`);
         prompted = true;
         if (inp.interact) {
-          const dialogues = [
-            'Stay safe out there...', 'Need any supplies?',
-            'The coast is our only hope.', 'Keep the engine running.',
-            'I heard Port Echo still has boats.', 'Watch the fuel gauge.',
-          ];
-          this.hud.showFloatingText(randomChoice(dialogues));
+          this.hud.showFloatingText(randomChoice([
+            'Stay safe...', 'Need supplies?', 'The coast is our hope.',
+            'Keep the engine running.', 'Port Echo has boats.', 'Watch the fuel.',
+          ]));
         }
         break;
       }
     }
 
-    // Furniture interaction
     for (const furn of this.trainRenderer.furnitureList) {
-      const d = distance(px, pz, furn.worldPos.x, furn.worldPos.z);
-      if (d < interactRange) {
-        const prompt = this.getFurniturePrompt(furn.type);
-        this.hud.showInteractPrompt(`[E] ${prompt}`);
+      if (distance(px, pz, furn.worldPos.x, furn.worldPos.z) < range) {
+        this.hud.showInteractPrompt(`[E] ${this.getFurniturePrompt(furn.type)}`);
         prompted = true;
-        if (inp.interact) {
-          this.executeFurnitureAction(furn.type);
-        }
+        if (inp.interact) this.executeFurnitureAction(furn.type);
         break;
       }
     }
@@ -728,12 +611,12 @@ export class GameEngine {
 
   private getFurniturePrompt(type: string): string {
     switch (type) {
-      case 'BRAKE_PANEL': return this.trainMoving ? `Stop Train | Speed: ${this.trainSpeed} | Fuel: ${Math.floor(this.fuel)}%` : 'Start Train';
+      case 'BRAKE_PANEL': return this.trainMoving ? `Stop Train (${this.trainSpeed} km/h)` : 'Start Train';
       case 'WORKBENCH': return 'Repair / Refuel';
       case 'MAP_BOARD': return 'View Map';
       case 'LIGHT_SWITCH': return 'Toggle Lights';
       case 'BED': return 'Sleep';
-      case 'COOKING_STOVE': return `Cook (Food: ${this.inventory.getCount('canned-food')})`;
+      case 'COOKING_STOVE': return 'Cook';
       case 'FIRST_AID': return 'Use First Aid';
       case 'PLANT_BOX': return 'Tend Plants';
       case 'STORAGE_CRATE': return 'Eat';
@@ -750,22 +633,25 @@ export class GameEngine {
           this.hud.showFloatingText('Train Stopped');
         } else {
           if (this.explorationActive) { this.hud.showFloatingText('Return to train first!'); return; }
-          if (this.fuel <= 0) { this.hud.showFloatingText('No fuel! Add scrap at workbench'); return; }
-          if (!this.destinationId) { this.hud.showFloatingText('Set a destination on map [M]'); return; }
+          if (this.fuel <= 0) { this.hud.showFloatingText('No fuel!'); return; }
+          if (!this.destinationId) {
+            // Auto-pick next destination
+            this.autoSetDestination();
+            if (!this.destinationId) { this.hud.showFloatingText('No route available'); return; }
+          }
           this.trainMoving = true;
           this.mode = 'TRAVELING';
-          this.hud.showFloatingText('Train Moving');
+          const dest = getLocation(this.destinationId!);
+          this.hud.showFloatingText(`Departing for ${dest?.name ?? 'destination'}`);
         }
         break;
-
       case 'BED':
         this.survivalManager.sleep(SLEEP_RESTORE_AMOUNT);
         this.hud.showFloatingText(`+${SLEEP_RESTORE_AMOUNT} Energy`);
         break;
-
       case 'COOKING_STOVE': {
-        const foodCount = this.inventory.getCount('canned-food');
-        if (foodCount > 0) {
+        const fc = this.inventory.getCount('canned-food');
+        if (fc > 0) {
           this.inventory.removeItem('canned-food', 1);
           const amt = Math.floor(EAT_RESTORE_AMOUNT * 1.5);
           this.survivalManager.eat(amt);
@@ -775,27 +661,20 @@ export class GameEngine {
         }
         break;
       }
-
       case 'STORAGE_CRATE':
         this.survivalManager.eat(EAT_RESTORE_AMOUNT);
         this.hud.showFloatingText(`+${EAT_RESTORE_AMOUNT} Food`);
         break;
-
       case 'FIRST_AID':
         if (this.inventory.hasItem('medkit', 1)) {
           this.inventory.removeItem('medkit', 1);
           this.survivalManager.heal(50);
-          this.hud.showFloatingText('+50 Health (Medkit)');
-        } else if (this.inventory.hasItem('bandage', 1)) {
-          this.inventory.removeItem('bandage', 1);
-          this.survivalManager.heal(25);
-          this.hud.showFloatingText('+25 Health');
+          this.hud.showFloatingText('+50 HP');
         } else {
           this.survivalManager.heal(15);
-          this.hud.showFloatingText('+15 Health');
+          this.hud.showFloatingText('+15 HP');
         }
         break;
-
       case 'WORKBENCH':
         if (this.engineHp < 70 && this.inventory.hasItem('scrap-metal', REPAIR_MATERIAL_COST)) {
           this.inventory.removeItem('scrap-metal', REPAIR_MATERIAL_COST);
@@ -810,35 +689,30 @@ export class GameEngine {
           showInventory(this.inventory, this.crafting, () => { this.uiOpen = false; });
         }
         break;
-
       case 'PLANT_BOX':
         if (this.inventory.hasItem('fertilizer', 1)) {
           this.inventory.removeItem('fertilizer', 1);
-          this.inventory.addItem('canned-food', 'Fresh Produce', 'food', 2, '');
-          this.hud.showFloatingText('+2 Fresh Produce');
+          this.inventory.addItem('canned-food', 'Produce', 'food', 2, '');
+          this.hud.showFloatingText('+2 Produce');
         } else {
           this.hud.showFloatingText('Need fertilizer...');
         }
         break;
-
       case 'MAP_BOARD':
         this.uiOpen = true;
         showMap(this.currentLocationId, this.destinationId, (destId) => {
           this.setDestination(destId);
         }, () => { this.uiOpen = false; });
         break;
-
       case 'LIGHT_SWITCH':
         this.interiorLightsOn = !this.interiorLightsOn;
+        this.trainRenderer.setInteriorLights(this.interiorLightsOn);
         this.hud.showFloatingText(this.interiorLightsOn ? 'Lights On' : 'Lights Off');
-        this.updateInteriorLighting();
         break;
     }
   }
 
-  // ===========================================
-  // TRAVEL
-  // ===========================================
+  // ===== TRAVEL =====
 
   private setDestination(destId: string): void {
     const route = getRoute(this.currentLocationId, destId);
@@ -850,12 +724,22 @@ export class GameEngine {
     this.hud.showFloatingText(`Destination: ${loc?.name ?? destId}`);
   }
 
+  private autoSetDestination(): void {
+    const reachable = getReachableLocations(this.currentLocationId);
+    if (reachable.length === 0) return;
+    // Prefer unvisited, or closest to port-echo
+    const dest = reachable.sort((a, b) => {
+      const ax = Math.abs(a.x - 900) + Math.abs(a.y - 300);
+      const bx = Math.abs(b.x - 900) + Math.abs(b.y - 300);
+      return ax - bx;
+    })[0];
+    this.setDestination(dest.id);
+  }
+
   private updateTravel(dt: number): void {
     if (!this.destinationId || this.travelDistance <= 0) return;
     const speedFactor = this.trainSpeed / TRAIN_SPEED_DEFAULT;
-    const kmPerSec = TRAVEL_SPEED_FACTOR * speedFactor;
-    this.travelProgress += (kmPerSec * dt) / this.travelDistance;
-
+    this.travelProgress += (TRAVEL_SPEED_FACTOR * speedFactor * dt) / this.travelDistance;
     if (this.travelProgress >= 1) {
       this.travelProgress = 1;
       this.arriveAtDestination();
@@ -873,15 +757,16 @@ export class GameEngine {
     this.mode = 'STOPPED';
     this.hud.showFloatingText(`Arrived at ${loc?.name ?? 'destination'}`);
 
+    // Auto-set next destination
+    this.autoSetDestination();
+
     if (this.currentLocationId === 'port-echo') {
       this.phase = 'GAMEOVER';
       showVictory(() => this.startNewGame());
     }
   }
 
-  // ===========================================
-  // ZOMBIES
-  // ===========================================
+  // ===== ZOMBIES =====
 
   private updateZombies(dt: number, dtMs: number): void {
     const spawnMult = this.timeOfDay === 'NIGHT' ? NIGHT_ZOMBIE_MULTIPLIER : 1;
@@ -895,24 +780,20 @@ export class GameEngine {
 
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
-    const aggroRange = ZOMBIE_AGGRO_RANGE * 0.03;
+    const aggroRange = 15; // bigger aggro range
     const bounds = this.trainRenderer.getBounds();
 
     for (let i = this.zombies.length - 1; i >= 0; i--) {
       const z = this.zombies[i];
       if (!z.alive) continue;
-
       const zPos = z.mesh.group.position;
-      const zx = zPos.x;
-      const zz = zPos.z;
 
-      // Apply velocity (knockback, push) with friction
+      // Apply velocity with friction
       if (z.velocity.lengthSq() > 0.001) {
         zPos.x += z.velocity.x * dt;
         zPos.y += z.velocity.y * dt;
         zPos.z += z.velocity.z * dt;
-        z.velocity.multiplyScalar(Math.max(0, 1 - 4 * dt)); // friction
-        // Gravity on Y
+        z.velocity.multiplyScalar(Math.max(0, 1 - 4 * dt));
         if (zPos.y > (z.insideTrain ? FLOOR_SURFACE_Y : GROUND_Y)) {
           z.velocity.y -= 12 * dt;
         } else {
@@ -920,47 +801,53 @@ export class GameEngine {
           z.velocity.y = 0;
         }
       } else {
-        // Keep on correct surface
         zPos.y = z.insideTrain ? FLOOR_SURFACE_Y : GROUND_Y;
       }
 
-      // Move toward player if in range
-      const distToPlayer = distance(zx, zz, px, pz);
+      const distToPlayer = distance(zPos.x, zPos.z, px, pz);
+
       if (distToPlayer < aggroRange) {
-        const dir = new THREE.Vector3(px - zx, 0, pz - zz).normalize();
-        const speed = ZOMBIE_CHASE_SPEED * 0.015 * dt;
-        zPos.x += dir.x * speed;
-        zPos.z += dir.z * speed;
+        // Chase player
+        const dir = new THREE.Vector3(px - zPos.x, 0, pz - zPos.z).normalize();
+        const spd = ZOMBIE_CHASE_SPEED * 0.015 * dt;
+        zPos.x += dir.x * spd;
+        zPos.z += dir.z * spd;
         z.mesh.group.rotation.y = Math.atan2(dir.x, dir.z);
         animateZombieLurch(z.mesh, dt);
 
-        // Attack player
+        // Attack player when close
         if (distToPlayer < 1.0) {
           z.attackCooldown -= dtMs;
           if (z.attackCooldown <= 0) {
             z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
             this.survival.health = Math.max(0, this.survival.health - ZOMBIE_DAMAGE);
             this.hud.showFloatingText(`-${ZOMBIE_DAMAGE}`);
+            animateZombieAttack(z.mesh);
             if (this.survival.health <= 0) this.gameOver();
           }
         }
       } else if (z.ambient && !z.insideTrain) {
-        // Ambient drift
+        // Wander toward the train (instead of standing still)
+        const trainCenterZ = this.trainRenderer.getCenter();
+        const toTrainX = -zPos.x * 0.3;
+        const toTrainZ = (trainCenterZ - zPos.z) * 0.1;
+        const wanderSpeed = ZOMBIE_AMBIENT_SPEED * 0.01 * dt;
+        zPos.x += toTrainX * wanderSpeed;
+        zPos.z += toTrainZ * wanderSpeed;
+
         if (this.trainMoving) {
           zPos.z += this.trainSpeed * 0.02 * dt;
         }
-        animateWalk(z.mesh, 0.3, dt);
+        animateZombieLurch(z.mesh, dt);
       } else {
-        animateWalk(z.mesh, 0, dt); // idle breathing
+        animateWalk(z.mesh, 0, dt);
       }
 
-      // Train collision for outside zombies
       if (!z.insideTrain) {
         this.handleZombieTrainCollision(z, dt, bounds);
       }
 
-      // Remove if too far
-      if (Math.abs(zz - pz) > 40) {
+      if (Math.abs(zPos.z - pz) > 50) {
         this.scene.remove(z.mesh.group);
         this.zombies.splice(i, 1);
       }
@@ -971,88 +858,63 @@ export class GameEngine {
     const zPos = z.mesh.group.position;
     const zx = zPos.x;
     const zz = zPos.z;
-    const margin = 0.4; // half zombie width
+    const margin = 0.4;
 
-    // Check overlap with train bounding box
     const inX = zx > bounds.minX - margin && zx < bounds.maxX + margin;
     const inZ = zz > bounds.minZ - margin && zz < bounds.maxZ + margin;
-
     if (!inX || !inZ) return;
 
-    // Find minimum penetration direction and push out smoothly
     const distLeft = zx - (bounds.minX - margin);
     const distRight = (bounds.maxX + margin) - zx;
     const distFront = zz - (bounds.minZ - margin);
     const distBack = (bounds.maxZ + margin) - zz;
-
     const minDist = Math.min(distLeft, distRight, distFront, distBack);
-    const pushSpeed = 6;
 
-    if (minDist === distLeft) {
-      zPos.x -= pushSpeed * dt;
-    } else if (minDist === distRight) {
-      zPos.x += pushSpeed * dt;
-    } else if (minDist === distFront) {
-      zPos.z -= pushSpeed * dt;
-    } else {
-      zPos.z += pushSpeed * dt;
-    }
+    if (minDist === distLeft) zPos.x -= 6 * dt;
+    else if (minDist === distRight) zPos.x += 6 * dt;
+    else if (minDist === distFront) zPos.z -= 6 * dt;
+    else zPos.z += 6 * dt;
 
-    // When train is moving, damage zombies on the sides and front
     if (this.trainMoving) {
-      // Cowcatcher: zombies near the front of the train
       if (minDist === distFront && distFront < 1.5) {
-        // Hit by the front! Big damage + fling to side
         z.hp -= 40 * dt;
-        const sideDir = zx < 0 ? -1 : 1;
-        z.velocity.set(sideDir * 8, 3, 4);
-        if (z.hp <= 0) {
-          this.killZombie(z, new THREE.Vector3(sideDir * 6, 3, 2));
-        }
+        const side = zx < 0 ? -1 : 1;
+        z.velocity.set(side * 8, 3, 4);
+        if (z.hp <= 0) this.killZombie(z, new THREE.Vector3(side * 6, 3, 2));
         return;
       }
-
-      // Side collision: damage + push backward (left behind)
       if (minDist === distLeft || minDist === distRight) {
         z.hp -= 15 * dt;
-        const sideDir = zx < 0 ? -1 : 1;
-        z.velocity.set(sideDir * 3, 0.5, this.trainSpeed * 0.03);
-        if (z.hp <= 0) {
-          this.killZombie(z, new THREE.Vector3(sideDir * 4, 2, 3));
-        }
+        const side = zx < 0 ? -1 : 1;
+        z.velocity.set(side * 3, 0.5, this.trainSpeed * 0.03);
+        if (z.hp <= 0) this.killZombie(z, new THREE.Vector3(side * 4, 2, 3));
       }
     }
 
-    // When train is stopped, zombies near windows attack them
     if (!this.trainMoving) {
       const nearWin = this.trainRenderer.getNearestWindow(zx, zz, 2.0);
       if (nearWin && !nearWin.broken) {
-        // Attack the window
         z.attackCooldown -= dt * 1000;
         if (z.attackCooldown <= 0) {
           z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
           const justBroke = this.trainRenderer.damageWindow(nearWin, ZOMBIE_WINDOW_DAMAGE);
-          if (justBroke) {
-            this.hud.showFloatingText('Window broken!');
-          }
+          if (justBroke) this.hud.showFloatingText('Window broken!');
         }
       } else if (nearWin && nearWin.broken) {
-        // Climb through broken window!
         z.insideTrain = true;
         z.ambient = false;
-        // Teleport to just inside the window
         const insideX = nearWin.side === 'left' ? nearWin.worldX - 0.8 : nearWin.worldX + 0.8;
         zPos.set(insideX, FLOOR_SURFACE_Y, nearWin.worldZ);
-        this.hud.showFloatingText('Zombie got in!');
+        animateWindowCrawl(z.mesh);
+        this.hud.showFloatingText('Zombie broke in!');
       }
     }
   }
 
   private spawnAmbientZombie(): void {
     const side = Math.random() < 0.5 ? -1 : 1;
-    const x = side * (CAR_WIDTH / 2 + 2 + Math.random() * 5);
-    const z = this.playerPos.z - 15 - Math.random() * 10;
-
+    const x = side * (CAR_WIDTH / 2 + 2 + Math.random() * 4);
+    const z = this.playerPos.z + (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 8);
     const mesh = createZombie();
     mesh.group.position.set(x, GROUND_Y, z);
     this.scene.add(mesh.group);
@@ -1064,56 +926,35 @@ export class GameEngine {
 
   private killZombie(z: ZombieEntity, force: THREE.Vector3): void {
     z.alive = false;
-
-    // Create ragdoll parts
     const parts = createRagdoll(z.mesh, force);
     for (const p of parts) {
       this.scene.add(p.mesh);
       this.ragdollParts.push(p);
     }
-
-    // Remove original zombie mesh
     this.scene.remove(z.mesh.group);
     const idx = this.zombies.indexOf(z);
     if (idx >= 0) this.zombies.splice(idx, 1);
   }
 
-  // ===========================================
-  // RAGDOLL
-  // ===========================================
+  // ===== RAGDOLL =====
 
   private updateRagdolls(dt: number): void {
     for (let i = this.ragdollParts.length - 1; i >= 0; i--) {
       const p = this.ragdollParts[i];
       p.life -= dt;
-
-      // Apply velocity
       p.mesh.position.addScaledVector(p.velocity, dt);
-
-      // Gravity
       p.velocity.y -= 15 * dt;
-
-      // Floor bounce
       if (p.mesh.position.y < 0.05) {
         p.mesh.position.y = 0.05;
-        p.velocity.y *= -0.3; // bounce damping
+        p.velocity.y *= -0.3;
         p.velocity.x *= 0.8;
         p.velocity.z *= 0.8;
       }
-
-      // Angular rotation
       p.mesh.rotation.x += p.angularVel.x * dt;
       p.mesh.rotation.y += p.angularVel.y * dt;
       p.mesh.rotation.z += p.angularVel.z * dt;
-      // Slow down angular vel
       p.angularVel.multiplyScalar(Math.max(0, 1 - 2 * dt));
-
-      // Fade out near end of life
-      if (p.life < 0.5) {
-        p.mesh.scale.multiplyScalar(0.95);
-      }
-
-      // Remove when dead
+      if (p.life < 0.5) p.mesh.scale.multiplyScalar(0.95);
       if (p.life <= 0) {
         this.scene.remove(p.mesh);
         this.ragdollParts.splice(i, 1);
@@ -1121,20 +962,52 @@ export class GameEngine {
     }
   }
 
-  // ===========================================
-  // EXPLORATION
-  // ===========================================
+  // ===== OCCLUSION =====
+
+  private updateOcclusion(): void {
+    // Restore previously occluded meshes
+    for (const mesh of this.occludedMeshes) {
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      mat.opacity = 1.0;
+    }
+    this.occludedMeshes.clear();
+
+    // Cache occludable meshes
+    if (!this.occludableCache) {
+      this.occludableCache = this.trainRenderer.getOccludableMeshes();
+    }
+
+    // Ray from camera to player
+    const camPos = this.camera.position.clone();
+    const playerTarget = this.playerPos.clone();
+    playerTarget.y += 0.8;
+    const dir = new THREE.Vector3().subVectors(playerTarget, camPos).normalize();
+    const dist = camPos.distanceTo(playerTarget);
+
+    this.raycaster.set(camPos, dir);
+    const intersects = this.raycaster.intersectObjects(this.occludableCache, false);
+
+    for (const hit of intersects) {
+      if (hit.distance < dist) {
+        const mesh = hit.object as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat.transparent) {
+          mat.opacity = 0.12;
+          this.occludedMeshes.add(mesh);
+        }
+      }
+    }
+  }
+
+  // ===== EXPLORATION =====
 
   private enterExploration(): void {
     this.mode = 'EXPLORING';
     this.explorationActive = true;
-
-    // Generate buildings + pickups
     const trainEnd = this.trainRenderer.totalLength;
     this.envRenderer.generateExploration(trainEnd / 2);
 
-    // Spawn pickups
-    const types: Array<{ name: string; type: string }> = [
+    const types = [
       { name: 'Scrap Metal', type: 'material' },
       { name: 'Canned Food', type: 'food' },
       { name: 'Bandage', type: 'medicine' },
@@ -1148,8 +1021,6 @@ export class GameEngine {
       this.scene.add(mesh);
       this.explorationPickups.push({ mesh, type: t.type, name: t.name, collected: false });
     }
-
-    // Move player outside — on ground level
     this.playerPos.set(0, GROUND_Y, trainEnd + 2);
     this.hud.showFloatingText('Exploring...');
   }
@@ -1158,21 +1029,15 @@ export class GameEngine {
     this.mode = 'STOPPED';
     this.explorationActive = false;
     this.envRenderer.clearExploration();
-
-    // Remove remaining pickups
     for (const p of this.explorationPickups) {
       if (!p.collected) this.scene.remove(p.mesh);
     }
     this.explorationPickups = [];
-
-    // Move player back inside — on train floor
     this.playerPos.set(0, FLOOR_SURFACE_Y, this.trainRenderer.totalLength - 2);
     this.hud.showFloatingText('Back on the train');
   }
 
-  // ===========================================
-  // NPCs
-  // ===========================================
+  // ===== NPCs =====
 
   private spawnNPC(name: string, x: number, z: number): void {
     const mesh = createNPC();
@@ -1189,26 +1054,16 @@ export class GameEngine {
         npc.wanderTimer = randomBetween(2000, 5000);
         npc.wanderDir.set(randomBetween(-1, 1), 0, randomBetween(-1, 1)).normalize();
       }
-
       const speed = 0.5 * dt;
-      const nx = npc.mesh.group.position.x + npc.wanderDir.x * speed;
-      const nz = npc.mesh.group.position.z + npc.wanderDir.z * speed;
-
-      // Keep inside train
-      npc.mesh.group.position.x = Math.max(bounds.minX + 0.3, Math.min(bounds.maxX - 0.3, nx));
-      npc.mesh.group.position.z = Math.max(bounds.minZ + 0.3, Math.min(bounds.maxZ - 0.3, nz));
+      npc.mesh.group.position.x = Math.max(bounds.minX + 0.3, Math.min(bounds.maxX - 0.3, npc.mesh.group.position.x + npc.wanderDir.x * speed));
+      npc.mesh.group.position.z = Math.max(bounds.minZ + 0.3, Math.min(bounds.maxZ - 0.3, npc.mesh.group.position.z + npc.wanderDir.z * speed));
       npc.mesh.group.position.y = FLOOR_SURFACE_Y;
-
-      if (npc.wanderDir.lengthSq() > 0.01) {
-        npc.mesh.group.rotation.y = Math.atan2(npc.wanderDir.x, npc.wanderDir.z);
-      }
+      if (npc.wanderDir.lengthSq() > 0.01) npc.mesh.group.rotation.y = Math.atan2(npc.wanderDir.x, npc.wanderDir.z);
       animateWalk(npc.mesh, 0.3, dt);
     }
   }
 
-  // ===========================================
-  // DAY/NIGHT
-  // ===========================================
+  // ===== DAY/NIGHT =====
 
   private updateDayNight(dtMs: number): void {
     this.dayTimer += dtMs;
@@ -1252,18 +1107,9 @@ export class GameEngine {
     }
   }
 
-  private updateInteriorLighting(): void {
-    for (const car of this.trainRenderer.cars) {
-      car.interiorGroup.visible = this.interiorLightsOn;
-    }
-  }
-
-  // ===========================================
-  // CAMERA
-  // ===========================================
+  // ===== CAMERA =====
 
   private updateCamera(dt: number): void {
-    // Orbit camera around player
     const orbitX = Math.sin(this.cameraOrbitAngle) * this.cameraDistance;
     const orbitZ = -Math.cos(this.cameraOrbitAngle) * this.cameraDistance;
     const orbitHeight = this.cameraHeight * (0.5 + this.cameraOrbitPitch);
@@ -1273,65 +1119,174 @@ export class GameEngine {
       this.playerPos.y + orbitHeight,
       this.playerPos.z + orbitZ,
     );
-
     this.camera.position.lerp(targetPos, 3 * dt);
 
-    const lookTarget = new THREE.Vector3(
-      this.playerPos.x,
-      this.playerPos.y + 1,
-      this.playerPos.z,
-    );
+    const lookTarget = new THREE.Vector3(this.playerPos.x, this.playerPos.y + 1, this.playerPos.z);
     this.camera.lookAt(lookTarget);
 
-    // Shadow light follows player
-    this.directionalLight.position.set(
-      this.playerPos.x + 10,
-      20,
-      this.playerPos.z + 10,
-    );
+    this.directionalLight.position.set(this.playerPos.x + 10, 20, this.playerPos.z + 10);
     this.directionalLight.target.position.copy(this.playerPos);
     this.directionalLight.target.updateMatrixWorld();
   }
 
-  // ===========================================
-  // ROOF VISIBILITY
-  // ===========================================
+  // ===== ROOF / LABELS =====
 
   private updateRoofVisibility(): void {
     const playerCarIndex = this.trainRenderer.getCarIndexAt(this.playerPos.z);
-
     for (let i = 0; i < this.trainRenderer.cars.length; i++) {
       const car = this.trainRenderer.cars[i];
       const roofMat = car.roofMesh.material as THREE.MeshStandardMaterial;
-
-      if (i === playerCarIndex) {
-        roofMat.opacity = 0;
-        roofMat.transparent = true;
-        car.roofMesh.castShadow = false;
-      } else {
-        roofMat.opacity = 0.25;
-        roofMat.transparent = true;
-        car.roofMesh.castShadow = false;
-      }
+      roofMat.transparent = true;
+      car.roofMesh.castShadow = false;
+      roofMat.opacity = i === playerCarIndex ? 0 : 0.25;
     }
-
-    // When exploring outside, show all roofs at low opacity
     if (this.explorationActive) {
       for (const car of this.trainRenderer.cars) {
-        const roofMat = car.roofMesh.material as THREE.MeshStandardMaterial;
-        roofMat.opacity = 0.3;
+        (car.roofMesh.material as THREE.MeshStandardMaterial).opacity = 0.3;
       }
     }
   }
 
-  // ===========================================
-  // HUD
-  // ===========================================
+  private updateFloatingLabels(): void {
+    const labels: Array<{ text: string; x: number; y: number; dist: number }> = [];
+    const px = this.playerPos.x;
+    const pz = this.playerPos.z;
+    const maxDist = 7;
+
+    for (const furn of this.trainRenderer.furnitureList) {
+      const d = distance(px, pz, furn.worldPos.x, furn.worldPos.z);
+      if (d > maxDist) continue;
+
+      // Project to screen
+      const worldPos = new THREE.Vector3(furn.worldPos.x, furn.worldPos.y + 1.5, furn.worldPos.z);
+      worldPos.project(this.camera);
+      const screenX = (worldPos.x * 0.5 + 0.5) * window.innerWidth;
+      const screenY = (-worldPos.y * 0.5 + 0.5) * window.innerHeight;
+
+      // Only show if in front of camera
+      if (worldPos.z > 0 && worldPos.z < 1) {
+        labels.push({ text: furn.label, x: screenX, y: screenY, dist: d });
+      }
+    }
+
+    this.hud.updateLabels(labels);
+  }
+
+  // ===== TRAIN MAP =====
+
+  private showTrainMap(): void {
+    this.uiOpen = true;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed; top:0; left:0; right:0; bottom:0;
+      background:rgba(0,0,0,0.85); z-index:100;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      font-family:'Courier New',monospace; color:#ccc;
+    `;
+
+    const title = document.createElement('h2');
+    title.textContent = 'TRAIN LAYOUT';
+    title.style.cssText = 'color:#8c8; margin-bottom:20px; font-size:20px;';
+    overlay.appendChild(title);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 700;
+    canvas.height = 200;
+    canvas.style.cssText = 'border:1px solid #444; border-radius:6px;';
+    overlay.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, 700, 200);
+
+    // Draw train schematic
+    const carNames = ['ENGINE', 'LIVING', 'STORAGE'];
+    const carX = 50;
+    const carY = 40;
+    const carW = 180;
+    const carH = 120;
+    const connW = 30;
+
+    for (let i = 0; i < 3; i++) {
+      const x = carX + i * (carW + connW);
+
+      // Car body
+      ctx.strokeStyle = '#668';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, carY, carW, carH);
+      ctx.fillStyle = '#222';
+      ctx.fillRect(x + 1, carY + 1, carW - 2, carH - 2);
+
+      // Car name
+      ctx.fillStyle = '#8a8';
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(carNames[i], x + carW / 2, carY + 18);
+
+      // Furniture inside
+      const car = this.trainRenderer.cars[i];
+      ctx.font = '10px monospace';
+      ctx.fillStyle = '#aab';
+      const furns = this.trainRenderer.furnitureList.filter(f =>
+        f.worldPos.z >= car.zStart && f.worldPos.z <= car.zEnd,
+      );
+      furns.forEach((f, fi) => {
+        ctx.fillText(f.label, x + carW / 2, carY + 35 + fi * 14);
+      });
+
+      // Windows
+      ctx.fillStyle = '#335577';
+      for (let w = 0; w < 4; w++) {
+        const wy = carY + 30 + w * 22;
+        ctx.fillRect(x + 2, wy, 6, 10);
+        ctx.fillRect(x + carW - 8, wy, 6, 10);
+      }
+
+      // Connector
+      if (i < 2) {
+        ctx.fillStyle = '#333';
+        ctx.fillRect(x + carW, carY + 20, connW, carH - 40);
+      }
+    }
+
+    // Locomotive nose
+    ctx.fillStyle = '#444';
+    ctx.beginPath();
+    ctx.moveTo(carX, carY);
+    ctx.lineTo(carX - 30, carY + carH / 2);
+    ctx.lineTo(carX, carY + carH);
+    ctx.fill();
+    ctx.fillStyle = '#668';
+    ctx.font = '9px monospace';
+    ctx.fillText('FRONT', carX - 15, carY + carH / 2 + 4);
+
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close [T]';
+    closeBtn.style.cssText = 'margin-top:20px; padding:8px 20px; background:#333; color:#ccc; border:1px solid #555; border-radius:4px; font-family:inherit; font-size:14px; cursor:pointer;';
+    closeBtn.onclick = () => {
+      overlay.remove();
+      this.uiOpen = false;
+    };
+    overlay.appendChild(closeBtn);
+
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.code === 'KeyT' || e.code === 'Escape') {
+        overlay.remove();
+        this.uiOpen = false;
+        window.removeEventListener('keydown', keyHandler);
+      }
+    };
+    window.addEventListener('keydown', keyHandler);
+
+    document.body.appendChild(overlay);
+  }
+
+  // ===== HUD =====
 
   private emitHud(): void {
     const destLoc = this.destinationId ? getLocation(this.destinationId) : null;
     const curLoc = getLocation(this.currentLocationId);
-
     const data: HudData = {
       health: this.survival.health,
       hunger: this.survival.hunger,
@@ -1349,22 +1304,19 @@ export class GameEngine {
       destination: destLoc?.name ?? null,
       travelProgress: this.travelProgress,
       currentLocation: curLoc?.name ?? 'Unknown',
+      currentLocationId: this.currentLocationId,
+      destinationId: this.destinationId,
+      isSprinting: this.isSprinting,
     };
     EventBus.emit('hud:update', data);
   }
 
-  // ===========================================
-  // GAME OVER
-  // ===========================================
+  // ===== GAME OVER =====
 
   private gameOver(): void {
     this.phase = 'GAMEOVER';
     showGameOver("You didn't survive...", () => this.startNewGame());
   }
-
-  // ===========================================
-  // UTILITY
-  // ===========================================
 
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;

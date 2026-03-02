@@ -1,9 +1,10 @@
 /**
  * HTML-based HUD overlay for the 3D game.
- * Renders on top of the Three.js canvas using DOM elements.
+ * Features: large stat bars, minimap, furniture labels, status display.
  */
 import { EventBus } from '../utils/EventBus';
 import { PLAYER_MAX_HP, HUNGER_MAX, ENERGY_MAX, FUEL_MAX, LOW_STAT_THRESHOLD } from '../data/BalanceConstants';
+import { MAP_LOCATIONS, ROUTE_SEGMENTS } from '../data/LocationData';
 
 export interface HudData {
   health: number;
@@ -22,6 +23,9 @@ export interface HudData {
   destination: string | null;
   travelProgress: number;
   currentLocation: string;
+  currentLocationId: string;
+  destinationId: string | null;
+  isSprinting: boolean;
 }
 
 export class HudOverlay {
@@ -30,13 +34,15 @@ export class HudOverlay {
   private hungerBar!: HTMLDivElement;
   private energyBar!: HTMLDivElement;
   private fuelBar!: HTMLDivElement;
-  private modeText!: HTMLDivElement;
-  private weaponText!: HTMLDivElement;
+  private statusText!: HTMLDivElement;
+  private infoText!: HTMLDivElement;
   private destText!: HTMLDivElement;
   private controlsText!: HTMLDivElement;
   private interactPrompt!: HTMLDivElement;
-  private floatingTexts: { el: HTMLDivElement; startTime: number; startY: number }[] = [];
   private fireWarning!: HTMLDivElement;
+  private minimapCanvas!: HTMLCanvasElement;
+  private minimapCtx!: CanvasRenderingContext2D;
+  private labelContainer!: HTMLDivElement;
 
   public create(): void {
     this.container = document.createElement('div');
@@ -48,34 +54,38 @@ export class HudOverlay {
     `;
     document.body.appendChild(this.container);
 
-    // Top-left: stat bars (bigger)
-    const statsPanel = this.makePanel('12px', '12px', '', '');
-    this.healthBar = this.makeBar(statsPanel, 'Health', '#44cc44', 100);
-    this.hungerBar = this.makeBar(statsPanel, 'Food', '#cc8844', 100);
-    this.energyBar = this.makeBar(statsPanel, 'Energy', '#4488cc', 100);
+    // Top-left: stat bars (large)
+    const statsPanel = this.makePanel('16px', '16px', '', '');
+    statsPanel.style.background = 'rgba(0,0,0,0.4)';
+    statsPanel.style.padding = '10px 14px';
+    statsPanel.style.borderRadius = '8px';
 
-    // Weapon info below stats
-    this.weaponText = document.createElement('div');
-    this.weaponText.style.cssText = 'margin-top:8px; font-size:12px; color:#aab;';
-    this.weaponText.textContent = 'Equipped: Rifle | Ammo: 15';
-    statsPanel.appendChild(this.weaponText);
+    this.healthBar = this.makeBar(statsPanel, 'HP', '#44cc44');
+    this.hungerBar = this.makeBar(statsPanel, 'FOOD', '#cc8844');
+    this.energyBar = this.makeBar(statsPanel, 'ENERGY', '#4488cc');
+    this.fuelBar = this.makeBar(statsPanel, 'FUEL', '#cccc44');
 
-    // Fuel bar
-    this.fuelBar = this.makeBar(statsPanel, 'Fuel', '#cccc44', 100);
+    // Info text below bars
+    this.infoText = document.createElement('div');
+    this.infoText.style.cssText = 'margin-top:10px; font-size:13px; color:#bbc; line-height:1.4;';
+    statsPanel.appendChild(this.infoText);
 
-    // Top-right: mode + time
-    const rightPanel = this.makePanel('12px', '', '', '12px');
+    // Top-right: status panel
+    const rightPanel = this.makePanel('16px', '', '', '16px');
+    rightPanel.style.background = 'rgba(0,0,0,0.4)';
+    rightPanel.style.padding = '10px 14px';
+    rightPanel.style.borderRadius = '8px';
     rightPanel.style.textAlign = 'right';
-    this.modeText = document.createElement('div');
-    this.modeText.style.cssText = 'font-size:14px; font-weight:bold; color:#8c8;';
-    this.modeText.textContent = 'TRAVELING';
-    rightPanel.appendChild(this.modeText);
+    rightPanel.style.minWidth = '180px';
 
-    // Bottom-left: destination + objective
-    const bottomPanel = this.makePanel('', '12px', '40px', '');
+    this.statusText = document.createElement('div');
+    this.statusText.style.cssText = 'font-size:16px; font-weight:bold; color:#8c8; line-height:1.6;';
+    rightPanel.appendChild(this.statusText);
+
+    // Bottom-left: destination
+    const bottomPanel = this.makePanel('', '16px', '44px', '');
     this.destText = document.createElement('div');
-    this.destText.style.cssText = 'font-size:12px; color:#8ac;';
-    this.destText.textContent = 'Objective: Reach Port Echo (The Coast)';
+    this.destText.style.cssText = 'font-size:13px; color:#8ac; background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:6px;';
     bottomPanel.appendChild(this.destText);
 
     // Bottom-center: controls
@@ -84,26 +94,43 @@ export class HudOverlay {
       position:fixed; bottom:8px; left:50%; transform:translateX(-50%);
       font-size:10px; color:#556; pointer-events:none;
     `;
-    this.controlsText.textContent = 'WASD: Move | Click: Fire | E: Interact | TAB: Inventory | M: Map | Q: Weapon | +/-: Speed | RightDrag: Camera | ESC: Pause';
+    this.controlsText.textContent = 'WASD: Move | Shift: Sprint | Click: Fire | E: Interact | TAB: Inventory | M: Map | T: Train | Q: Weapon | ,/.: Camera | ESC: Pause';
     this.container.appendChild(this.controlsText);
 
-    // Center: interact prompt
+    // Interact prompt
     this.interactPrompt = document.createElement('div');
     this.interactPrompt.style.cssText = `
       position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
-      font-size:14px; color:#fff; background:#0008; padding:6px 16px;
-      border-radius:6px; display:none; pointer-events:none;
+      font-size:15px; color:#fff; background:#0009; padding:8px 18px;
+      border-radius:8px; display:none; pointer-events:none;
     `;
     this.container.appendChild(this.interactPrompt);
 
     // Fire warning
     this.fireWarning = document.createElement('div');
     this.fireWarning.style.cssText = `
-      position:fixed; top:12px; left:50%; transform:translateX(-50%);
-      font-size:18px; font-weight:bold; color:#f42; display:none;
+      position:fixed; top:16px; left:50%; transform:translateX(-50%);
+      font-size:20px; font-weight:bold; color:#f42; display:none;
     `;
     this.fireWarning.textContent = 'FIRE!';
     this.container.appendChild(this.fireWarning);
+
+    // Minimap (bottom-right)
+    this.minimapCanvas = document.createElement('canvas');
+    this.minimapCanvas.width = 220;
+    this.minimapCanvas.height = 130;
+    this.minimapCanvas.style.cssText = `
+      position:fixed; bottom:40px; right:16px;
+      border: 1px solid #555; border-radius:6px;
+      background:rgba(10,15,20,0.7); pointer-events:none;
+    `;
+    this.container.appendChild(this.minimapCanvas);
+    this.minimapCtx = this.minimapCanvas.getContext('2d')!;
+
+    // Floating label container
+    this.labelContainer = document.createElement('div');
+    this.labelContainer.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; pointer-events:none;';
+    this.container.appendChild(this.labelContainer);
 
     EventBus.on('hud:update', (data: unknown) => this.onUpdate(data as HudData));
   }
@@ -119,17 +146,17 @@ export class HudOverlay {
     return p;
   }
 
-  private makeBar(parent: HTMLDivElement, label: string, color: string, _max: number): HTMLDivElement {
+  private makeBar(parent: HTMLDivElement, label: string, color: string): HTMLDivElement {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; align-items:center; margin-bottom:5px;';
+    row.style.cssText = 'display:flex; align-items:center; margin-bottom:6px;';
     const lbl = document.createElement('span');
-    lbl.style.cssText = 'width:55px; font-size:12px; color:#bbb; font-weight:bold;';
+    lbl.style.cssText = 'width:58px; font-size:13px; color:#ddd; font-weight:bold;';
     lbl.textContent = label;
     row.appendChild(lbl);
     const barBg = document.createElement('div');
-    barBg.style.cssText = 'width:160px; height:14px; background:#222; border:1px solid #555; border-radius:3px; overflow:hidden;';
+    barBg.style.cssText = 'width:240px; height:20px; background:#1a1a1a; border:1px solid #666; border-radius:4px; overflow:hidden;';
     const barFill = document.createElement('div');
-    barFill.style.cssText = `width:100%; height:100%; background:${color}; transition: width 0.2s;`;
+    barFill.style.cssText = `width:100%; height:100%; background:${color}; transition:width 0.2s; border-radius:3px;`;
     barBg.appendChild(barFill);
     row.appendChild(barBg);
     parent.appendChild(row);
@@ -137,6 +164,7 @@ export class HudOverlay {
   }
 
   private onUpdate(data: HudData): void {
+    // Stat bars
     this.healthBar.style.width = `${(data.health / PLAYER_MAX_HP) * 100}%`;
     this.healthBar.style.background = data.health < LOW_STAT_THRESHOLD ? '#f44' : '#4c4';
     this.hungerBar.style.width = `${(data.hunger / HUNGER_MAX) * 100}%`;
@@ -144,22 +172,157 @@ export class HudOverlay {
     this.energyBar.style.width = `${(data.energy / ENERGY_MAX) * 100}%`;
     this.energyBar.style.background = data.energy < LOW_STAT_THRESHOLD ? '#f44' : '#48c';
     this.fuelBar.style.width = `${(data.fuel / FUEL_MAX) * 100}%`;
-    this.fuelBar.style.background = data.fuel < 20 ? '#f44' : data.fuel < 40 ? '#cc4' : '#cc4';
+    this.fuelBar.style.background = data.fuel < 20 ? '#f44' : '#cc4';
 
-    const speedSuffix = data.mode === 'TRAVELING' ? ` (${data.trainSpeed} km/h)` : '';
-    this.modeText.textContent = data.mode + speedSuffix;
-    this.modeText.style.color = data.mode === 'TRAVELING' ? '#8c8' : data.mode === 'STOPPED' ? '#cc4' : '#c64';
+    // Info text beneath bars
+    const sprintText = data.isSprinting ? ' | SPRINTING' : '';
+    this.infoText.textContent = `${data.weapon} | Ammo: ${data.ammo} | Crew: ${data.npcCount} | ${data.timeOfDay}${sprintText}`;
 
-    this.weaponText.textContent = `Equipped: ${data.weapon} | Ammo: ${data.ammo} | Crew: ${data.npcCount} | ${data.timeOfDay}`;
+    // Status panel (top-right)
+    let statusLines = '';
+    if (data.mode === 'TRAVELING') {
+      statusLines = `TRAIN MOVING\n${data.trainSpeed} km/h`;
+    } else if (data.mode === 'STOPPED') {
+      statusLines = 'TRAIN STOPPED';
+    } else {
+      statusLines = 'EXPLORING';
+    }
+    if (data.destination) {
+      statusLines += `\nTo: ${data.destination}`;
+      const pct = Math.floor(data.travelProgress * 100);
+      statusLines += `\nProgress: ${pct}%`;
+    }
+    this.statusText.innerHTML = statusLines.split('\n').map((line, i) => {
+      const color = i === 0
+        ? (data.mode === 'TRAVELING' ? '#8c8' : data.mode === 'STOPPED' ? '#cc4' : '#c84')
+        : '#aac';
+      const size = i === 0 ? '16px' : '12px';
+      return `<div style="color:${color};font-size:${size}">${line}</div>`;
+    }).join('');
 
+    // Destination text (bottom)
     if (data.destination) {
       const pct = Math.floor(data.travelProgress * 100);
-      this.destText.textContent = `Heading to: ${data.destination} (${pct}%) | Objective: Reach Port Echo`;
+      this.destText.textContent = `Heading to: ${data.destination} (${pct}%) | Goal: Reach Port Echo`;
     } else {
-      this.destText.textContent = `At: ${data.currentLocation} - Set destination on map [M] | Objective: Reach Port Echo`;
+      this.destText.textContent = `At: ${data.currentLocation} | Next: ${data.destination ?? 'Set destination [M]'} | Goal: Reach Port Echo`;
     }
 
+    // Minimap
+    this.drawMinimap(data.currentLocationId, data.destinationId, data.travelProgress);
+
     this.fireWarning.style.display = data.hasFire ? 'block' : 'none';
+  }
+
+  private drawMinimap(currentId: string, destId: string | null, progress: number): void {
+    const ctx = this.minimapCtx;
+    const cw = this.minimapCanvas.width;
+    const ch = this.minimapCanvas.height;
+    ctx.clearRect(0, 0, cw, ch);
+
+    // Map location coordinates to canvas
+    const mapX = (lx: number) => 10 + ((lx - 50) / 900) * (cw - 20);
+    const mapY = (ly: number) => 10 + ((ly - 120) / 430) * (ch - 20);
+
+    // Draw route lines
+    ctx.strokeStyle = '#334';
+    ctx.lineWidth = 1;
+    for (const route of ROUTE_SEGMENTS) {
+      const from = MAP_LOCATIONS.find(l => l.id === route.from);
+      const to = MAP_LOCATIONS.find(l => l.id === route.to);
+      if (!from || !to) continue;
+      ctx.beginPath();
+      ctx.moveTo(mapX(from.x), mapY(from.y));
+      ctx.lineTo(mapX(to.x), mapY(to.y));
+      ctx.stroke();
+    }
+
+    // Draw travel progress line
+    if (destId) {
+      const cur = MAP_LOCATIONS.find(l => l.id === currentId);
+      const dest = MAP_LOCATIONS.find(l => l.id === destId);
+      if (cur && dest) {
+        const cx = mapX(cur.x);
+        const cy = mapY(cur.y);
+        const dx = mapX(dest.x);
+        const dy = mapY(dest.y);
+        // Progress line
+        ctx.strokeStyle = '#4a4';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + (dx - cx) * progress, cy + (dy - cy) * progress);
+        ctx.stroke();
+        // Remaining
+        ctx.strokeStyle = '#444';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(cx + (dx - cx) * progress, cy + (dy - cy) * progress);
+        ctx.lineTo(dx, dy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // Draw location dots
+    for (const loc of MAP_LOCATIONS) {
+      const x = mapX(loc.x);
+      const y = mapY(loc.y);
+      let color = '#556';
+      let radius = 3;
+
+      if (loc.id === currentId) {
+        color = '#4f4';
+        radius = 5;
+      } else if (loc.id === destId) {
+        color = '#f44';
+        radius = 4;
+      } else if (loc.id === 'port-echo') {
+        color = '#ff4';
+        radius = 4;
+      }
+
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // Labels for current, dest, and port-echo
+      if (loc.id === currentId || loc.id === destId || loc.id === 'port-echo') {
+        ctx.fillStyle = '#aab';
+        ctx.font = '9px monospace';
+        ctx.fillText(loc.name.length > 12 ? loc.name.substring(0, 12) + '..' : loc.name, x + 6, y + 3);
+      }
+    }
+  }
+
+  // --- Floating labels for interactable objects ---
+
+  public updateLabels(labels: Array<{ text: string; x: number; y: number; dist: number }>): void {
+    // Clear old labels
+    while (this.labelContainer.children.length > labels.length) {
+      this.labelContainer.removeChild(this.labelContainer.lastChild!);
+    }
+    // Add more if needed
+    while (this.labelContainer.children.length < labels.length) {
+      const el = document.createElement('div');
+      el.style.cssText = `
+        position:absolute; font-size:11px; color:#dda; text-shadow:0 0 4px #000;
+        pointer-events:none; white-space:nowrap; transform:translateX(-50%);
+      `;
+      this.labelContainer.appendChild(el);
+    }
+    // Update
+    for (let i = 0; i < labels.length; i++) {
+      const el = this.labelContainer.children[i] as HTMLDivElement;
+      const lbl = labels[i];
+      el.textContent = lbl.text;
+      el.style.left = `${lbl.x}px`;
+      el.style.top = `${lbl.y}px`;
+      const alpha = Math.max(0.3, 1 - lbl.dist / 8);
+      el.style.opacity = String(alpha);
+    }
   }
 
   public showInteractPrompt(text: string): void {
@@ -181,12 +344,10 @@ export class HudOverlay {
     `;
     el.textContent = text;
     this.container.appendChild(el);
-
     requestAnimationFrame(() => {
       el.style.top = '30%';
       el.style.opacity = '0';
     });
-
     setTimeout(() => el.remove(), 1300);
   }
 

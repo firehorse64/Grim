@@ -1,7 +1,7 @@
 /**
  * Framework-agnostic input manager for keyboard + mouse.
  * No Phaser dependency — pure DOM events.
- * Supports right-click drag for camera rotation.
+ * Supports right-click drag + keyboard for camera rotation, and sprint.
  */
 export interface InputState3D {
   moveX: number;      // -1..1
@@ -11,17 +11,21 @@ export interface InputState3D {
   openInventory: boolean;
   pause: boolean;
   openMap: boolean;
+  openTrainMap: boolean;
   switchWeapon: boolean;
   speedUp: boolean;
   speedDown: boolean;
+  sprint: boolean;
   mouseX: number;     // screen space
   mouseY: number;
   mouseDown: boolean;
   mouseJustPressed: boolean;
-  // Camera rotation (right-click drag)
+  // Camera rotation
   rightMouseDown: boolean;
   cameraDeltaX: number;
   cameraDeltaY: number;
+  cameraRotateLeft: boolean;
+  cameraRotateRight: boolean;
 }
 
 export class InputManager3D {
@@ -93,9 +97,15 @@ export class InputManager3D {
     s.openInventory = this.keysJustDown.has('Tab');
     s.pause = this.keysJustDown.has('Escape');
     s.openMap = this.keysJustDown.has('KeyM');
+    s.openTrainMap = this.keysJustDown.has('KeyT');
     s.switchWeapon = this.keysJustDown.has('KeyQ');
     s.speedUp = this.keysJustDown.has('Equal');
     s.speedDown = this.keysJustDown.has('Minus');
+    s.sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+
+    // Keyboard camera rotation (hold comma/period)
+    s.cameraRotateLeft = this.keys.has('Comma') || this.keys.has('BracketLeft');
+    s.cameraRotateRight = this.keys.has('Period') || this.keys.has('BracketRight');
 
     s.mouseX = this._mouseX;
     s.mouseY = this._mouseY;
@@ -118,10 +128,11 @@ export class InputManager3D {
   public static empty(): InputState3D {
     return {
       moveX: 0, moveZ: 0, interact: false, attack: false,
-      openInventory: false, pause: false, openMap: false,
-      switchWeapon: false, speedUp: false, speedDown: false,
+      openInventory: false, pause: false, openMap: false, openTrainMap: false,
+      switchWeapon: false, speedUp: false, speedDown: false, sprint: false,
       mouseX: 0, mouseY: 0, mouseDown: false, mouseJustPressed: false,
       rightMouseDown: false, cameraDeltaX: 0, cameraDeltaY: 0,
+      cameraRotateLeft: false, cameraRotateRight: false,
     };
   }
 }

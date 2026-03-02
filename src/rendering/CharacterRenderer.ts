@@ -1,7 +1,6 @@
 /**
  * Procedural 3D character models — player, zombies, NPCs.
- * Simple box-based characters with distinct colors.
- * Feet are at local y=0 so group.position.y = surface height.
+ * Feet at local y=0 so group.position.y = surface height.
  */
 import * as THREE from 'three';
 import * as Mat from './Materials';
@@ -32,22 +31,18 @@ export interface RagdollPart {
 
 function createCharacter(bodyMat: THREE.Material, headMat: THREE.Material, legMat: THREE.Material): CharacterMesh {
   const group = new THREE.Group();
-
-  // Body (torso)
   const bodyGeo = new THREE.BoxGeometry(0.4, 0.5, 0.25);
   const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
   bodyMesh.position.y = BODY_Y;
   bodyMesh.castShadow = true;
   group.add(bodyMesh);
 
-  // Head
   const headGeo = new THREE.BoxGeometry(0.25, 0.25, 0.25);
   const headMesh = new THREE.Mesh(headGeo, headMat);
   headMesh.position.y = HEAD_Y;
   headMesh.castShadow = true;
   group.add(headMesh);
 
-  // Arms
   const armGeo = new THREE.BoxGeometry(0.12, 0.45, 0.12);
   const armL = new THREE.Mesh(armGeo, bodyMat);
   armL.position.set(-0.3, ARM_Y, 0);
@@ -56,7 +51,6 @@ function createCharacter(bodyMat: THREE.Material, headMat: THREE.Material, legMa
   armR.position.set(0.3, ARM_Y, 0);
   group.add(armR);
 
-  // Legs
   const legGeo = new THREE.BoxGeometry(0.15, 0.45, 0.15);
   const legL = new THREE.Mesh(legGeo, legMat);
   legL.position.set(-0.1, LEG_Y, 0);
@@ -65,13 +59,11 @@ function createCharacter(bodyMat: THREE.Material, headMat: THREE.Material, legMa
   legR.position.set(0.1, LEG_Y, 0);
   group.add(legR);
 
-  // Don't set group.position.y — GameEngine manages positioning based on surface
   return { group, bodyMesh, headMesh, armL, armR, legL, legR, animTime: 0 };
 }
 
 export function createPlayer(): CharacterMesh {
   const char = createCharacter(Mat.playerBody(), Mat.playerHead(), Mat.playerLegs());
-  // Small backpack
   const backpack = new THREE.Mesh(
     new THREE.BoxGeometry(0.3, 0.35, 0.15),
     new THREE.MeshStandardMaterial({ color: 0x665533 }),
@@ -83,7 +75,6 @@ export function createPlayer(): CharacterMesh {
 
 export function createZombie(): CharacterMesh {
   const char = createCharacter(Mat.zombieBody(), Mat.zombieHead(), Mat.zombieBody());
-  // Slightly hunched
   char.bodyMesh.rotation.x = 0.2;
   char.headMesh.rotation.x = 0.15;
   return char;
@@ -93,10 +84,9 @@ export function createNPC(): CharacterMesh {
   return createCharacter(Mat.npcBody(), Mat.npcHead(), Mat.playerLegs());
 }
 
-/** Animate walking with legs/arms swing, or idle breathing when stationary */
+/** Walking animation with idle breathing when stationary */
 export function animateWalk(char: CharacterMesh, speed: number, dt: number): void {
   if (speed < 0.01) {
-    // Idle breathing
     char.animTime += dt * 1.5;
     const breathe = Math.sin(char.animTime) * 0.01;
     char.bodyMesh.position.y = BODY_Y + breathe;
@@ -115,11 +105,10 @@ export function animateWalk(char: CharacterMesh, speed: number, dt: number): voi
   char.armR.rotation.x = swing * 0.6;
 }
 
-/** Animate a melee swing — quick arm forward-and-back */
+/** Melee swing animation */
 export function animateMeleeSwing(char: CharacterMesh): void {
   const startTime = performance.now();
   const duration = 250;
-
   const doSwing = () => {
     const t = Math.min((performance.now() - startTime) / duration, 1);
     const swing = t < 0.4 ? t / 0.4 : (1 - t) / 0.6;
@@ -136,13 +125,12 @@ export function animateMeleeSwing(char: CharacterMesh): void {
   requestAnimationFrame(doSwing);
 }
 
-/** Animate zombie lurch — stumbling motion */
+/** Zombie lurch/stumble walk */
 export function animateZombieLurch(char: CharacterMesh, dt: number): void {
   char.animTime += dt * 3;
   const lurch = Math.sin(char.animTime) * 0.15;
   char.bodyMesh.rotation.z = lurch;
   char.headMesh.rotation.z = -lurch * 0.5;
-  // Shambling walk
   const swing = Math.sin(char.animTime * 0.7) * 0.3;
   char.legL.rotation.x = swing;
   char.legR.rotation.x = -swing;
@@ -150,11 +138,57 @@ export function animateZombieLurch(char: CharacterMesh, dt: number): void {
   char.armR.rotation.x = 0.6 + Math.sin(char.animTime * 0.6) * 0.3;
 }
 
-/** Create ragdoll parts from a character, launched with a force direction */
+/** Zombie attack lunge — arms reach forward */
+export function animateZombieAttack(char: CharacterMesh): void {
+  const startTime = performance.now();
+  const duration = 400;
+  const doAttack = () => {
+    const t = Math.min((performance.now() - startTime) / duration, 1);
+    const lunge = t < 0.3 ? t / 0.3 : (1 - t) / 0.7;
+    char.armL.rotation.x = -lunge * 1.5;
+    char.armR.rotation.x = -lunge * 1.5;
+    char.bodyMesh.rotation.x = 0.2 + lunge * 0.3;
+    if (t < 1) requestAnimationFrame(doAttack);
+    else {
+      char.armL.rotation.x = 0.8;
+      char.armR.rotation.x = 0.6;
+      char.bodyMesh.rotation.x = 0.2;
+    }
+  };
+  requestAnimationFrame(doAttack);
+}
+
+/** Zombie window crawl animation — body tilts forward, arms reach */
+export function animateWindowCrawl(char: CharacterMesh): void {
+  const startTime = performance.now();
+  const duration = 800;
+  const doCrawl = () => {
+    const t = Math.min((performance.now() - startTime) / duration, 1);
+    // Tilt body forward like climbing through
+    char.bodyMesh.rotation.x = 0.2 + t * 0.8;
+    char.headMesh.rotation.x = 0.15 - t * 0.3;
+    char.armL.rotation.x = -t * 1.2;
+    char.armR.rotation.x = -t * 1.0;
+    char.legL.rotation.x = t * 0.6;
+    char.legR.rotation.x = -t * 0.4;
+    if (t < 1) requestAnimationFrame(doCrawl);
+    else {
+      // Reset to hunched zombie pose
+      char.bodyMesh.rotation.x = 0.2;
+      char.headMesh.rotation.x = 0.15;
+      char.armL.rotation.x = 0;
+      char.armR.rotation.x = 0;
+      char.legL.rotation.x = 0;
+      char.legR.rotation.x = 0;
+    }
+  };
+  requestAnimationFrame(doCrawl);
+}
+
+/** Create ragdoll parts from a character */
 export function createRagdoll(char: CharacterMesh, force: THREE.Vector3): RagdollPart[] {
   const parts: RagdollPart[] = [];
   const worldPos = char.group.position.clone();
-
   const defs: { mesh: THREE.Mesh; yOff: number }[] = [
     { mesh: char.bodyMesh, yOff: BODY_Y },
     { mesh: char.headMesh, yOff: HEAD_Y },
@@ -163,7 +197,6 @@ export function createRagdoll(char: CharacterMesh, force: THREE.Vector3): Ragdol
     { mesh: char.legL, yOff: LEG_Y },
     { mesh: char.legR, yOff: LEG_Y },
   ];
-
   for (const def of defs) {
     const clone = def.mesh.clone();
     clone.position.set(
@@ -171,24 +204,20 @@ export function createRagdoll(char: CharacterMesh, force: THREE.Vector3): Ragdol
       worldPos.y + def.yOff,
       worldPos.z + (def.mesh.position.z || 0),
     );
-
     const vel = force.clone().multiplyScalar(0.3 + Math.random() * 0.7);
     vel.x += (Math.random() - 0.5) * 4;
     vel.y += 2 + Math.random() * 4;
     vel.z += (Math.random() - 0.5) * 4;
-
     const angVel = new THREE.Vector3(
       (Math.random() - 0.5) * 12,
       (Math.random() - 0.5) * 12,
       (Math.random() - 0.5) * 12,
     );
-
     parts.push({ mesh: clone, velocity: vel, angularVel: angVel, life: 2.5 });
   }
   return parts;
 }
 
-/** Create a bullet mesh */
 export function createBullet(): THREE.Mesh {
   const geo = new THREE.SphereGeometry(0.05, 4, 4);
   const mesh = new THREE.Mesh(geo, Mat.bullet());
@@ -196,7 +225,6 @@ export function createBullet(): THREE.Mesh {
   return mesh;
 }
 
-/** Create a pickup item mesh */
 export function createPickupMesh(type: string): THREE.Mesh {
   const geo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
   const mat = type === 'food'
