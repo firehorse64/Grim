@@ -1,6 +1,7 @@
 /**
  * Framework-agnostic input manager for keyboard + mouse.
  * No Phaser dependency — pure DOM events.
+ * Supports right-click drag for camera rotation.
  */
 export interface InputState3D {
   moveX: number;      // -1..1
@@ -17,6 +18,10 @@ export interface InputState3D {
   mouseY: number;
   mouseDown: boolean;
   mouseJustPressed: boolean;
+  // Camera rotation (right-click drag)
+  rightMouseDown: boolean;
+  cameraDeltaX: number;
+  cameraDeltaY: number;
 }
 
 export class InputManager3D {
@@ -30,6 +35,9 @@ export class InputManager3D {
   private _mouseY = 0;
   private _mouseDown = false;
   private _prevMouseDown = false;
+  private _rightMouseDown = false;
+  private _cameraDeltaX = 0;
+  private _cameraDeltaY = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.state = InputManager3D.empty();
@@ -47,12 +55,18 @@ export class InputManager3D {
     this.canvas.addEventListener('mousemove', (e) => {
       this._mouseX = e.clientX;
       this._mouseY = e.clientY;
+      if (this._rightMouseDown) {
+        this._cameraDeltaX += e.movementX;
+        this._cameraDeltaY += e.movementY;
+      }
     });
     this.canvas.addEventListener('mousedown', (e) => {
       if (e.button === 0) this._mouseDown = true;
+      if (e.button === 2) this._rightMouseDown = true;
     });
     this.canvas.addEventListener('mouseup', (e) => {
       if (e.button === 0) this._mouseDown = false;
+      if (e.button === 2) this._rightMouseDown = false;
     });
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -88,6 +102,13 @@ export class InputManager3D {
     s.mouseJustPressed = this._mouseDown && !this._prevMouseDown;
     s.mouseDown = this._mouseDown;
     this._prevMouseDown = this._mouseDown;
+
+    // Camera rotation from right-click drag
+    s.rightMouseDown = this._rightMouseDown;
+    s.cameraDeltaX = this._cameraDeltaX;
+    s.cameraDeltaY = this._cameraDeltaY;
+    this._cameraDeltaX = 0;
+    this._cameraDeltaY = 0;
   }
 
   public isKeyJustDown(code: string): boolean {
@@ -100,6 +121,7 @@ export class InputManager3D {
       openInventory: false, pause: false, openMap: false,
       switchWeapon: false, speedUp: false, speedDown: false,
       mouseX: 0, mouseY: 0, mouseDown: false, mouseJustPressed: false,
+      rightMouseDown: false, cameraDeltaX: 0, cameraDeltaY: 0,
     };
   }
 }

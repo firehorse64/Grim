@@ -9,8 +9,9 @@ import { AudioEngine } from './AudioEngine';
 import { TrainRenderer, CAR_WIDTH, CAR_LENGTH, CONNECTOR_LENGTH, FLOOR_Y } from '../rendering/TrainRenderer';
 import { EnvironmentRenderer } from '../rendering/EnvironmentRenderer';
 import {
-  CharacterMesh, createPlayer, createZombie, createNPC,
-  animateWalk, createBullet, createPickupMesh,
+  CharacterMesh, RagdollPart, createPlayer, createZombie, createNPC,
+  animateWalk, animateMeleeSwing, animateZombieLurch, createRagdoll,
+  createBullet, createPickupMesh,
 } from '../rendering/CharacterRenderer';
 import { HudOverlay, HudData } from '../ui/HudOverlay';
 import { showMainMenu, showPauseMenu, showGameOver, showInventory, showMap, showVictory } from '../ui/ScreenOverlays';
@@ -31,7 +32,7 @@ import {
   EXIT_TRAIN_RANGE, DAY_PHASE_DURATION_MS, NIGHT_ZOMBIE_MULTIPLIER,
   ENGINE_DEGRADE_PER_SEC, BRAKE_DEGRADE_PER_SEC, MAINTENANCE_WARNING_THRESHOLD,
   REPAIR_AMOUNT, REPAIR_MATERIAL_COST, LOW_STAT_THRESHOLD,
-  HUNGER_MAX, ENERGY_MAX,
+  HUNGER_MAX, ENERGY_MAX, ZOMBIE_WINDOW_DAMAGE, WINDOW_MAX_HP,
 } from '../data/BalanceConstants';
 import { SurvivalState, WeaponType, InventoryItem } from '../types/GameTypes';
 
@@ -39,12 +40,18 @@ type GamePhase = 'MENU' | 'PLAYING' | 'PAUSED' | 'GAMEOVER';
 type GameMode = 'TRAVELING' | 'STOPPED' | 'EXPLORING';
 type TimeOfDay = 'DAWN' | 'DAY' | 'DUSK' | 'NIGHT';
 
+// Character feet at local y=0, so group.y = surface height
+const FLOOR_SURFACE_Y = FLOOR_Y + 0.05; // top of train floor
+const GROUND_Y = 0; // ground level
+
 interface ZombieEntity {
   mesh: CharacterMesh;
   alive: boolean;
   hp: number;
   attackCooldown: number;
-  ambient: boolean; // ambient = scrolls with environment
+  ambient: boolean;
+  velocity: THREE.Vector3;
+  insideTrain: boolean;
 }
 
 interface Bullet {
@@ -79,7 +86,7 @@ export class GameEngine {
 
   // Player
   private playerMesh!: CharacterMesh;
-  private playerPos = new THREE.Vector3(0, FLOOR_Y, 6);
+  private playerPos = new THREE.Vector3(0, FLOOR_SURFACE_Y, 6);
   private playerFacing = new THREE.Vector3(0, 0, 1);
   private playerSpeedMult = 1.0;
 
@@ -122,6 +129,9 @@ export class GameEngine {
   private zombies: ZombieEntity[] = [];
   private zombieSpawnTimer = 0;
 
+  // Ragdoll parts
+  private ragdollParts: RagdollPart[] = [];
+
   // NPCs
   private npcs: NPCEntity[] = [];
 
@@ -136,7 +146,13 @@ export class GameEngine {
 
   // Raycasting for mouse aim
   private raycaster = new THREE.Raycaster();
-  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_Y - 0.5);
+  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_SURFACE_Y);
+
+  // Camera orbit
+  private cameraOrbitAngle = 0; // radians around Y axis
+  private cameraOrbitPitch = 0.6; // radians from horizontal (0.6 ~ 34 degrees)
+  private cameraDistance = 12;
+  private cameraHeight = 10;
 
   // UI state
   private uiOpen = false;
@@ -192,7 +208,7 @@ export class GameEngine {
 
     // Player
     this.playerMesh = createPlayer();
-    this.playerPos.set(0, FLOOR_Y, CAR_LENGTH / 2);
+    this.playerPos.set(0, FLOOR_SURFACE_Y, CAR_LENGTH / 2);
     this.playerMesh.group.position.copy(this.playerPos);
     this.scene.add(this.playerMesh.group);
 
@@ -250,6 +266,7 @@ export class GameEngine {
     this.dayTimer = 0;
     this.currentWeapon = WeaponType.RIFLE;
     this.explorationActive = false;
+    this.cameraOrbitAngle = 0;
 
     // Survival
     this.survival = { hunger: HUNGER_MAX, energy: ENERGY_MAX, health: PLAYER_MAX_HP };
@@ -263,8 +280,8 @@ export class GameEngine {
     this.crafting = new CraftingManager();
     this.crafting.create();
 
-    // Reset player pos
-    this.playerPos.set(0, FLOOR_Y, CAR_LENGTH / 2);
+    // Reset player pos — on top of train floor
+    this.playerPos.set(0, FLOOR_SURFACE_Y, CAR_LENGTH / 2);
 
     this.audio.resume();
     this.hud.showFloatingText('Riverside Station — Set a destination on the map [M]');
@@ -292,6 +309,7 @@ export class GameEngine {
       this.updateGame(dt, dtMs);
     }
 
+    this.updateRagdolls(dt);
     this.updateCamera(dt);
     this.renderer.render(this.scene, this.camera);
   };
@@ -336,6 +354,14 @@ export class GameEngine {
     if (inp.speedDown) {
       this.trainSpeed = Math.max(TRAIN_SPEED_MIN, this.trainSpeed - TRAIN_SPEED_STEP);
       this.hud.showFloatingText(`Speed: ${this.trainSpeed}`);
+    }
+
+    // Camera rotation (right-click drag)
+    if (inp.cameraDeltaX !== 0) {
+      this.cameraOrbitAngle += inp.cameraDeltaX * 0.004;
+    }
+    if (inp.cameraDeltaY !== 0) {
+      this.cameraOrbitPitch = Math.max(0.15, Math.min(1.2, this.cameraOrbitPitch + inp.cameraDeltaY * 0.004));
     }
 
     // Survival
@@ -396,11 +422,10 @@ export class GameEngine {
 
     // Connector restriction
     if (this.trainMoving && this.trainRenderer.isInConnector(this.playerPos.x, this.playerPos.z)) {
-      // Push toward center x
       this.playerPos.x *= 0.9;
     }
 
-    // Roof transparency — hide roof of current car, make others semi-transparent
+    // Roof transparency
     this.updateRoofVisibility();
 
     // Emit HUD
@@ -412,16 +437,24 @@ export class GameEngine {
   // ===========================================
 
   private updatePlayer(dt: number, inp: InputManager3D['state']): void {
-    const speed = PLAYER_SPEED * this.playerSpeedMult * dt * 0.02; // scale for 3D units
-    let dx = -inp.moveX * speed;
-    let dz = -inp.moveZ * speed;
+    const speed = PLAYER_SPEED * this.playerSpeedMult * dt * 0.02;
+
+    // Transform input relative to camera orbit angle
+    const cos = Math.cos(this.cameraOrbitAngle);
+    const sin = Math.sin(this.cameraOrbitAngle);
+    const rawX = -inp.moveX;
+    const rawZ = -inp.moveZ;
+    let dx = rawX * cos - rawZ * sin;
+    let dz = rawX * sin + rawZ * cos;
 
     // Normalize diagonal
     if (dx !== 0 && dz !== 0) {
       const mag = Math.sqrt(dx * dx + dz * dz);
-      dx = (dx / mag) * speed;
-      dz = (dz / mag) * speed;
+      dx = (dx / mag);
+      dz = (dz / mag);
     }
+    dx *= speed;
+    dz *= speed;
 
     const newX = this.playerPos.x + dx;
     const newZ = this.playerPos.z + dz;
@@ -432,10 +465,12 @@ export class GameEngine {
     if (!this.explorationActive) {
       this.playerPos.x = Math.max(bounds.minX + padding, Math.min(bounds.maxX - padding, newX));
       this.playerPos.z = Math.max(bounds.minZ + padding, Math.min(bounds.maxZ - padding, newZ));
+      this.playerPos.y = FLOOR_SURFACE_Y;
     } else {
       // Wider bounds for exploration
       this.playerPos.x = Math.max(-30, Math.min(30, newX));
       this.playerPos.z = Math.max(bounds.minZ - 20, Math.min(bounds.maxZ + 30, newZ));
+      this.playerPos.y = GROUND_Y;
     }
 
     // Update facing
@@ -521,17 +556,36 @@ export class GameEngine {
   private meleeAttack(): void {
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
-    const range = MELEE_RANGE * 0.03;
+    const range = 1.5; // generous melee range in 3D units
 
+    // Visual feedback — swing animation
+    animateMeleeSwing(this.playerMesh);
+
+    let hitAny = false;
     for (const z of this.zombies) {
       if (!z.alive) continue;
-      const dist = distance(px, pz, z.mesh.group.position.x, z.mesh.group.position.z);
+      const zPos = z.mesh.group.position;
+      const dist = distance(px, pz, zPos.x, zPos.z);
       if (dist < range) {
-        z.hp -= MELEE_DAMAGE;
-        this.hud.showFloatingText(`-${MELEE_DAMAGE}`);
-        if (z.hp <= 0) this.killZombie(z);
-        this.audio.playHit();
+        // Check facing direction (within ~120 degree cone)
+        const toZombie = new THREE.Vector3(zPos.x - px, 0, zPos.z - pz).normalize();
+        const dot = this.playerFacing.dot(toZombie);
+        if (dot > -0.2) { // generous angle
+          z.hp -= MELEE_DAMAGE;
+          // Knockback
+          const knockDir = toZombie.clone().multiplyScalar(3);
+          knockDir.y = 1;
+          z.velocity.add(knockDir);
+          this.hud.showFloatingText(`-${MELEE_DAMAGE}`);
+          if (z.hp <= 0) this.killZombie(z, toZombie.multiplyScalar(5));
+          this.audio.playHit();
+          hitAny = true;
+        }
       }
+    }
+
+    if (!hitAny) {
+      // Miss — still show the swing
     }
   }
 
@@ -548,8 +602,12 @@ export class GameEngine {
         const dist = b.mesh.position.distanceTo(z.mesh.group.position);
         if (dist < 0.5) {
           z.hp -= b.damage;
+          // Knockback from bullet
+          const knockDir = b.dir.clone().multiplyScalar(2);
+          knockDir.y = 0.5;
+          z.velocity.add(knockDir);
           this.hud.showFloatingText(`-${b.damage}`);
-          if (z.hp <= 0) this.killZombie(z);
+          if (z.hp <= 0) this.killZombie(z, b.dir.clone().multiplyScalar(5));
           this.audio.playHit();
           hit = true;
           break;
@@ -570,11 +628,11 @@ export class GameEngine {
   private handleInteractions(inp: InputManager3D['state']): void {
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
-    const interactRange = PLAYER_INTERACT_RANGE * 0.03; // scale for 3D
+    const interactRange = PLAYER_INTERACT_RANGE * 0.03;
     let prompted = false;
 
     // Check exit/enter train (when stopped, near end of storage car)
-    const storageDoorZ = (CAR_LENGTH + CONNECTOR_LENGTH) * 2 + CAR_LENGTH; // end of last car
+    const storageDoorZ = (CAR_LENGTH + CONNECTOR_LENGTH) * 2 + CAR_LENGTH;
     if (this.mode === 'STOPPED' && !this.explorationActive) {
       const distToDoor = distance(px, pz, 0, storageDoorZ);
       if (distToDoor < EXIT_TRAIN_RANGE * 0.04) {
@@ -616,6 +674,19 @@ export class GameEngine {
             this.audio.playPickup();
           }
           break;
+        }
+      }
+    }
+
+    // Window repair interaction
+    if (!this.explorationActive) {
+      const nearWin = this.trainRenderer.getNearestBrokenWindow(px, pz, interactRange * 1.5);
+      if (nearWin) {
+        this.hud.showInteractPrompt('[E] Repair Window');
+        prompted = true;
+        if (inp.interact) {
+          this.trainRenderer.repairWindow(nearWin);
+          this.hud.showFloatingText('Window Repaired!');
         }
       }
     }
@@ -831,18 +902,37 @@ export class GameEngine {
       const z = this.zombies[i];
       if (!z.alive) continue;
 
-      const zx = z.mesh.group.position.x;
-      const zz = z.mesh.group.position.z;
+      const zPos = z.mesh.group.position;
+      const zx = zPos.x;
+      const zz = zPos.z;
+
+      // Apply velocity (knockback, push) with friction
+      if (z.velocity.lengthSq() > 0.001) {
+        zPos.x += z.velocity.x * dt;
+        zPos.y += z.velocity.y * dt;
+        zPos.z += z.velocity.z * dt;
+        z.velocity.multiplyScalar(Math.max(0, 1 - 4 * dt)); // friction
+        // Gravity on Y
+        if (zPos.y > (z.insideTrain ? FLOOR_SURFACE_Y : GROUND_Y)) {
+          z.velocity.y -= 12 * dt;
+        } else {
+          zPos.y = z.insideTrain ? FLOOR_SURFACE_Y : GROUND_Y;
+          z.velocity.y = 0;
+        }
+      } else {
+        // Keep on correct surface
+        zPos.y = z.insideTrain ? FLOOR_SURFACE_Y : GROUND_Y;
+      }
 
       // Move toward player if in range
       const distToPlayer = distance(zx, zz, px, pz);
       if (distToPlayer < aggroRange) {
         const dir = new THREE.Vector3(px - zx, 0, pz - zz).normalize();
         const speed = ZOMBIE_CHASE_SPEED * 0.015 * dt;
-        z.mesh.group.position.x += dir.x * speed;
-        z.mesh.group.position.z += dir.z * speed;
+        zPos.x += dir.x * speed;
+        zPos.z += dir.z * speed;
         z.mesh.group.rotation.y = Math.atan2(dir.x, dir.z);
-        animateWalk(z.mesh, 1, dt);
+        animateZombieLurch(z.mesh, dt);
 
         // Attack player
         if (distToPlayer < 1.0) {
@@ -854,19 +944,19 @@ export class GameEngine {
             if (this.survival.health <= 0) this.gameOver();
           }
         }
-      } else if (z.ambient) {
+      } else if (z.ambient && !z.insideTrain) {
         // Ambient drift
         if (this.trainMoving) {
-          z.mesh.group.position.z += this.trainSpeed * 0.02 * dt;
+          zPos.z += this.trainSpeed * 0.02 * dt;
         }
         animateWalk(z.mesh, 0.3, dt);
+      } else {
+        animateWalk(z.mesh, 0, dt); // idle breathing
       }
 
-      // Prevent clipping into train
-      if (zx > bounds.minX - 0.5 && zx < bounds.maxX + 0.5 &&
-          zz > bounds.minZ && zz < bounds.maxZ) {
-        if (zx < 0) z.mesh.group.position.x = bounds.minX - 0.8;
-        else z.mesh.group.position.x = bounds.maxX + 0.8;
+      // Train collision for outside zombies
+      if (!z.insideTrain) {
+        this.handleZombieTrainCollision(z, dt, bounds);
       }
 
       // Remove if too far
@@ -877,30 +967,158 @@ export class GameEngine {
     }
   }
 
+  private handleZombieTrainCollision(z: ZombieEntity, dt: number, bounds: { minX: number; maxX: number; minZ: number; maxZ: number }): void {
+    const zPos = z.mesh.group.position;
+    const zx = zPos.x;
+    const zz = zPos.z;
+    const margin = 0.4; // half zombie width
+
+    // Check overlap with train bounding box
+    const inX = zx > bounds.minX - margin && zx < bounds.maxX + margin;
+    const inZ = zz > bounds.minZ - margin && zz < bounds.maxZ + margin;
+
+    if (!inX || !inZ) return;
+
+    // Find minimum penetration direction and push out smoothly
+    const distLeft = zx - (bounds.minX - margin);
+    const distRight = (bounds.maxX + margin) - zx;
+    const distFront = zz - (bounds.minZ - margin);
+    const distBack = (bounds.maxZ + margin) - zz;
+
+    const minDist = Math.min(distLeft, distRight, distFront, distBack);
+    const pushSpeed = 6;
+
+    if (minDist === distLeft) {
+      zPos.x -= pushSpeed * dt;
+    } else if (minDist === distRight) {
+      zPos.x += pushSpeed * dt;
+    } else if (minDist === distFront) {
+      zPos.z -= pushSpeed * dt;
+    } else {
+      zPos.z += pushSpeed * dt;
+    }
+
+    // When train is moving, damage zombies on the sides and front
+    if (this.trainMoving) {
+      // Cowcatcher: zombies near the front of the train
+      if (minDist === distFront && distFront < 1.5) {
+        // Hit by the front! Big damage + fling to side
+        z.hp -= 40 * dt;
+        const sideDir = zx < 0 ? -1 : 1;
+        z.velocity.set(sideDir * 8, 3, 4);
+        if (z.hp <= 0) {
+          this.killZombie(z, new THREE.Vector3(sideDir * 6, 3, 2));
+        }
+        return;
+      }
+
+      // Side collision: damage + push backward (left behind)
+      if (minDist === distLeft || minDist === distRight) {
+        z.hp -= 15 * dt;
+        const sideDir = zx < 0 ? -1 : 1;
+        z.velocity.set(sideDir * 3, 0.5, this.trainSpeed * 0.03);
+        if (z.hp <= 0) {
+          this.killZombie(z, new THREE.Vector3(sideDir * 4, 2, 3));
+        }
+      }
+    }
+
+    // When train is stopped, zombies near windows attack them
+    if (!this.trainMoving) {
+      const nearWin = this.trainRenderer.getNearestWindow(zx, zz, 2.0);
+      if (nearWin && !nearWin.broken) {
+        // Attack the window
+        z.attackCooldown -= dt * 1000;
+        if (z.attackCooldown <= 0) {
+          z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
+          const justBroke = this.trainRenderer.damageWindow(nearWin, ZOMBIE_WINDOW_DAMAGE);
+          if (justBroke) {
+            this.hud.showFloatingText('Window broken!');
+          }
+        }
+      } else if (nearWin && nearWin.broken) {
+        // Climb through broken window!
+        z.insideTrain = true;
+        z.ambient = false;
+        // Teleport to just inside the window
+        const insideX = nearWin.side === 'left' ? nearWin.worldX - 0.8 : nearWin.worldX + 0.8;
+        zPos.set(insideX, FLOOR_SURFACE_Y, nearWin.worldZ);
+        this.hud.showFloatingText('Zombie got in!');
+      }
+    }
+  }
+
   private spawnAmbientZombie(): void {
-    const bounds = this.trainRenderer.getBounds();
     const side = Math.random() < 0.5 ? -1 : 1;
     const x = side * (CAR_WIDTH / 2 + 2 + Math.random() * 5);
     const z = this.playerPos.z - 15 - Math.random() * 10;
 
     const mesh = createZombie();
-    mesh.group.position.set(x, FLOOR_Y, z);
+    mesh.group.position.set(x, GROUND_Y, z);
     this.scene.add(mesh.group);
     this.zombies.push({
-      mesh, alive: true, hp: 50, attackCooldown: ZOMBIE_ATTACK_COOLDOWN_MS, ambient: true,
+      mesh, alive: true, hp: 50, attackCooldown: ZOMBIE_ATTACK_COOLDOWN_MS,
+      ambient: true, velocity: new THREE.Vector3(), insideTrain: false,
     });
   }
 
-  private killZombie(z: ZombieEntity): void {
+  private killZombie(z: ZombieEntity, force: THREE.Vector3): void {
     z.alive = false;
-    // Simple death: scale down and remove after delay
-    z.mesh.group.scale.y = 0.2;
-    z.mesh.group.position.y = FLOOR_Y - 0.2;
-    setTimeout(() => {
-      this.scene.remove(z.mesh.group);
-      const idx = this.zombies.indexOf(z);
-      if (idx >= 0) this.zombies.splice(idx, 1);
-    }, 1500);
+
+    // Create ragdoll parts
+    const parts = createRagdoll(z.mesh, force);
+    for (const p of parts) {
+      this.scene.add(p.mesh);
+      this.ragdollParts.push(p);
+    }
+
+    // Remove original zombie mesh
+    this.scene.remove(z.mesh.group);
+    const idx = this.zombies.indexOf(z);
+    if (idx >= 0) this.zombies.splice(idx, 1);
+  }
+
+  // ===========================================
+  // RAGDOLL
+  // ===========================================
+
+  private updateRagdolls(dt: number): void {
+    for (let i = this.ragdollParts.length - 1; i >= 0; i--) {
+      const p = this.ragdollParts[i];
+      p.life -= dt;
+
+      // Apply velocity
+      p.mesh.position.addScaledVector(p.velocity, dt);
+
+      // Gravity
+      p.velocity.y -= 15 * dt;
+
+      // Floor bounce
+      if (p.mesh.position.y < 0.05) {
+        p.mesh.position.y = 0.05;
+        p.velocity.y *= -0.3; // bounce damping
+        p.velocity.x *= 0.8;
+        p.velocity.z *= 0.8;
+      }
+
+      // Angular rotation
+      p.mesh.rotation.x += p.angularVel.x * dt;
+      p.mesh.rotation.y += p.angularVel.y * dt;
+      p.mesh.rotation.z += p.angularVel.z * dt;
+      // Slow down angular vel
+      p.angularVel.multiplyScalar(Math.max(0, 1 - 2 * dt));
+
+      // Fade out near end of life
+      if (p.life < 0.5) {
+        p.mesh.scale.multiplyScalar(0.95);
+      }
+
+      // Remove when dead
+      if (p.life <= 0) {
+        this.scene.remove(p.mesh);
+        this.ragdollParts.splice(i, 1);
+      }
+    }
   }
 
   // ===========================================
@@ -926,13 +1144,13 @@ export class GameEngine {
       const t = randomChoice(types);
       const side = Math.random() < 0.5 ? -1 : 1;
       const mesh = createPickupMesh(t.type);
-      mesh.position.set(side * (4 + Math.random() * 10), FLOOR_Y + 0.5, trainEnd / 2 + randomBetween(-8, 8));
+      mesh.position.set(side * (4 + Math.random() * 10), GROUND_Y + 0.5, trainEnd / 2 + randomBetween(-8, 8));
       this.scene.add(mesh);
       this.explorationPickups.push({ mesh, type: t.type, name: t.name, collected: false });
     }
 
-    // Move player outside
-    this.playerPos.set(0, FLOOR_Y, trainEnd + 2);
+    // Move player outside — on ground level
+    this.playerPos.set(0, GROUND_Y, trainEnd + 2);
     this.hud.showFloatingText('Exploring...');
   }
 
@@ -947,8 +1165,8 @@ export class GameEngine {
     }
     this.explorationPickups = [];
 
-    // Move player back inside
-    this.playerPos.set(0, FLOOR_Y, this.trainRenderer.totalLength - 2);
+    // Move player back inside — on train floor
+    this.playerPos.set(0, FLOOR_SURFACE_Y, this.trainRenderer.totalLength - 2);
     this.hud.showFloatingText('Back on the train');
   }
 
@@ -958,7 +1176,7 @@ export class GameEngine {
 
   private spawnNPC(name: string, x: number, z: number): void {
     const mesh = createNPC();
-    mesh.group.position.set(x, FLOOR_Y, z);
+    mesh.group.position.set(x, FLOOR_SURFACE_Y, z);
     this.scene.add(mesh.group);
     this.npcs.push({ mesh, name, wanderTimer: 0, wanderDir: new THREE.Vector3() });
   }
@@ -979,6 +1197,7 @@ export class GameEngine {
       // Keep inside train
       npc.mesh.group.position.x = Math.max(bounds.minX + 0.3, Math.min(bounds.maxX - 0.3, nx));
       npc.mesh.group.position.z = Math.max(bounds.minZ + 0.3, Math.min(bounds.maxZ - 0.3, nz));
+      npc.mesh.group.position.y = FLOOR_SURFACE_Y;
 
       if (npc.wanderDir.lengthSq() > 0.01) {
         npc.mesh.group.rotation.y = Math.atan2(npc.wanderDir.x, npc.wanderDir.z);
@@ -1035,7 +1254,6 @@ export class GameEngine {
 
   private updateInteriorLighting(): void {
     for (const car of this.trainRenderer.cars) {
-      const alpha = this.interiorLightsOn ? 1.0 : 0.3;
       car.interiorGroup.visible = this.interiorLightsOn;
     }
   }
@@ -1045,14 +1263,24 @@ export class GameEngine {
   // ===========================================
 
   private updateCamera(dt: number): void {
-    // Third-person follow camera
+    // Orbit camera around player
+    const orbitX = Math.sin(this.cameraOrbitAngle) * this.cameraDistance;
+    const orbitZ = -Math.cos(this.cameraOrbitAngle) * this.cameraDistance;
+    const orbitHeight = this.cameraHeight * (0.5 + this.cameraOrbitPitch);
+
     const targetPos = new THREE.Vector3(
-      this.playerPos.x * 0.3,
-      this.playerPos.y + 10,
-      this.playerPos.z - 6,
+      this.playerPos.x + orbitX,
+      this.playerPos.y + orbitHeight,
+      this.playerPos.z + orbitZ,
     );
+
     this.camera.position.lerp(targetPos, 3 * dt);
-    const lookTarget = new THREE.Vector3(this.playerPos.x, this.playerPos.y + 1, this.playerPos.z + 4);
+
+    const lookTarget = new THREE.Vector3(
+      this.playerPos.x,
+      this.playerPos.y + 1,
+      this.playerPos.z,
+    );
     this.camera.lookAt(lookTarget);
 
     // Shadow light follows player
@@ -1077,12 +1305,10 @@ export class GameEngine {
       const roofMat = car.roofMesh.material as THREE.MeshStandardMaterial;
 
       if (i === playerCarIndex) {
-        // Player is inside this car — hide roof completely
         roofMat.opacity = 0;
         roofMat.transparent = true;
         car.roofMesh.castShadow = false;
       } else {
-        // Other cars — semi-transparent so player can see the train structure
         roofMat.opacity = 0.25;
         roofMat.transparent = true;
         car.roofMesh.castShadow = false;

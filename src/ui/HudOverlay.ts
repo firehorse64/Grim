@@ -48,7 +48,7 @@ export class HudOverlay {
     `;
     document.body.appendChild(this.container);
 
-    // Top-left: stat bars
+    // Top-left: stat bars (bigger)
     const statsPanel = this.makePanel('12px', '12px', '', '');
     this.healthBar = this.makeBar(statsPanel, 'Health', '#44cc44', 100);
     this.hungerBar = this.makeBar(statsPanel, 'Food', '#cc8844', 100);
@@ -56,7 +56,7 @@ export class HudOverlay {
 
     // Weapon info below stats
     this.weaponText = document.createElement('div');
-    this.weaponText.style.cssText = 'margin-top:8px; font-size:11px; color:#aab;';
+    this.weaponText.style.cssText = 'margin-top:8px; font-size:12px; color:#aab;';
     this.weaponText.textContent = 'Equipped: Rifle | Ammo: 15';
     statsPanel.appendChild(this.weaponText);
 
@@ -67,14 +67,14 @@ export class HudOverlay {
     const rightPanel = this.makePanel('12px', '', '', '12px');
     rightPanel.style.textAlign = 'right';
     this.modeText = document.createElement('div');
-    this.modeText.style.cssText = 'font-size:12px; font-weight:bold; color:#8c8;';
+    this.modeText.style.cssText = 'font-size:14px; font-weight:bold; color:#8c8;';
     this.modeText.textContent = 'TRAVELING';
     rightPanel.appendChild(this.modeText);
 
     // Bottom-left: destination + objective
     const bottomPanel = this.makePanel('', '12px', '40px', '');
     this.destText = document.createElement('div');
-    this.destText.style.cssText = 'font-size:11px; color:#8ac;';
+    this.destText.style.cssText = 'font-size:12px; color:#8ac;';
     this.destText.textContent = 'Objective: Reach Port Echo (The Coast)';
     bottomPanel.appendChild(this.destText);
 
@@ -82,17 +82,17 @@ export class HudOverlay {
     this.controlsText = document.createElement('div');
     this.controlsText.style.cssText = `
       position:fixed; bottom:8px; left:50%; transform:translateX(-50%);
-      font-size:9px; color:#556; pointer-events:none;
+      font-size:10px; color:#556; pointer-events:none;
     `;
-    this.controlsText.textContent = 'WASD: Move | Click: Fire | E: Interact | TAB: Inventory | M: Map | +/-: Speed | ESC: Pause';
+    this.controlsText.textContent = 'WASD: Move | Click: Fire | E: Interact | TAB: Inventory | M: Map | Q: Weapon | +/-: Speed | RightDrag: Camera | ESC: Pause';
     this.container.appendChild(this.controlsText);
 
     // Center: interact prompt
     this.interactPrompt = document.createElement('div');
     this.interactPrompt.style.cssText = `
       position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
-      font-size:13px; color:#fff; background:#0008; padding:4px 12px;
-      border-radius:4px; display:none; pointer-events:none;
+      font-size:14px; color:#fff; background:#0008; padding:6px 16px;
+      border-radius:6px; display:none; pointer-events:none;
     `;
     this.container.appendChild(this.interactPrompt);
 
@@ -100,7 +100,7 @@ export class HudOverlay {
     this.fireWarning = document.createElement('div');
     this.fireWarning.style.cssText = `
       position:fixed; top:12px; left:50%; transform:translateX(-50%);
-      font-size:16px; font-weight:bold; color:#f42; display:none;
+      font-size:18px; font-weight:bold; color:#f42; display:none;
     `;
     this.fireWarning.textContent = 'FIRE!';
     this.container.appendChild(this.fireWarning);
@@ -121,13 +121,13 @@ export class HudOverlay {
 
   private makeBar(parent: HTMLDivElement, label: string, color: string, _max: number): HTMLDivElement {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; align-items:center; margin-bottom:4px;';
+    row.style.cssText = 'display:flex; align-items:center; margin-bottom:5px;';
     const lbl = document.createElement('span');
-    lbl.style.cssText = 'width:50px; font-size:10px; color:#999;';
+    lbl.style.cssText = 'width:55px; font-size:12px; color:#bbb; font-weight:bold;';
     lbl.textContent = label;
     row.appendChild(lbl);
     const barBg = document.createElement('div');
-    barBg.style.cssText = 'width:90px; height:8px; background:#333; border-radius:2px; overflow:hidden;';
+    barBg.style.cssText = 'width:160px; height:14px; background:#222; border:1px solid #555; border-radius:3px; overflow:hidden;';
     const barFill = document.createElement('div');
     barFill.style.cssText = `width:100%; height:100%; background:${color}; transition: width 0.2s;`;
     barBg.appendChild(barFill);
@@ -175,8 +175,8 @@ export class HudOverlay {
     const el = document.createElement('div');
     el.style.cssText = `
       position:fixed; left:50%; top:40%; transform:translateX(-50%);
-      font-size:14px; font-weight:bold; color:#fd4;
-      text-shadow: 0 0 4px #000; pointer-events:none;
+      font-size:16px; font-weight:bold; color:#fd4;
+      text-shadow: 0 0 6px #000; pointer-events:none;
       transition: top 1.2s, opacity 1.2s;
     `;
     el.textContent = text;

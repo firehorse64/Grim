@@ -32,6 +32,8 @@ export const trainInteriorWall = () => mat('trainWall', 0x8a7a6a, { roughness: 0
 export const trainRoof = () => mat('trainRoof', 0x4a5a6a, { metalness: 0.3, roughness: 0.5 });
 export const trainConnector = () => mat('trainConn', 0x3a3a3a, { metalness: 0.5, roughness: 0.7 });
 export const trainWindow = () => mat('trainWin', 0x335577, { roughness: 0.3, metalness: 0.1 });
+export const trainWindowDamaged = () => mat('trainWinDmg', 0x223344, { roughness: 0.5, metalness: 0.1 });
+export const trainWindowBroken = () => mat('trainWinBroken', 0x111111, { roughness: 0.9 });
 export const trainWindowOpen = () => mat('trainWinOpen', 0x1a2a3a);
 export const trainDoor = () => mat('trainDoor', 0x5a5a6a, { metalness: 0.5 });
 

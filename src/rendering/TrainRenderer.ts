@@ -1,10 +1,11 @@
 /**
  * Builds procedural 3D train geometry.
  * Train runs along Z-axis. Each car is a box with interior detail.
+ * Tracks window damage state for zombie break-in system.
  */
 import * as THREE from 'three';
 import * as Mat from './Materials';
-import { NUM_TRAIN_CARS } from '../data/BalanceConstants';
+import { NUM_TRAIN_CARS, WINDOW_MAX_HP } from '../data/BalanceConstants';
 
 // 3D dimensions (meters)
 export const CAR_WIDTH = 3.2;   // x
@@ -36,11 +37,23 @@ export interface FurnitureMesh3D {
   worldPos: THREE.Vector3;
 }
 
+export interface WindowState3D {
+  mesh: THREE.Mesh;
+  hp: number;
+  maxHp: number;
+  broken: boolean;
+  carIndex: number;
+  side: 'left' | 'right';
+  worldX: number;
+  worldZ: number;
+}
+
 export class TrainRenderer {
   public group = new THREE.Group();
   public cars: TrainCarMeshes[] = [];
   public connectors: THREE.Mesh[] = [];
   public furnitureList: FurnitureMesh3D[] = [];
+  public windows: WindowState3D[] = [];
   public totalLength = 0;
 
   public create(): void {
@@ -56,7 +69,7 @@ export class TrainRenderer {
         zOffset += CONNECTOR_LENGTH;
       }
 
-      const car = this.createCar(zOffset, carPurposes[i] || 'STORAGE');
+      const car = this.createCar(zOffset, carPurposes[i] || 'STORAGE', i);
       this.group.add(car.group);
       this.cars.push(car);
       zOffset += CAR_LENGTH;
@@ -70,7 +83,7 @@ export class TrainRenderer {
     this.addHeadlight();
   }
 
-  private createCar(zStart: number, purpose: string): TrainCarMeshes {
+  private createCar(zStart: number, purpose: string, carIndex: number): TrainCarMeshes {
     const g = new THREE.Group();
     const wallMeshes: THREE.Mesh[] = [];
     const windowMeshes: THREE.Mesh[] = [];
@@ -102,7 +115,7 @@ export class TrainRenderer {
     wallMeshes.push(rWall);
     g.add(rWall);
 
-    // Windows along walls
+    // Windows along walls (with state tracking)
     const numWindows = 4;
     for (let wi = 0; wi < numWindows; wi++) {
       const wz = zStart + 1.5 + wi * ((CAR_LENGTH - 3) / (numWindows - 1));
@@ -110,10 +123,31 @@ export class TrainRenderer {
       const lwMesh = this.createWindow(halfW - 0.01, wz);
       windowMeshes.push(lwMesh);
       g.add(lwMesh);
+      this.windows.push({
+        mesh: lwMesh,
+        hp: WINDOW_MAX_HP,
+        maxHp: WINDOW_MAX_HP,
+        broken: false,
+        carIndex,
+        side: 'left',
+        worldX: halfW,
+        worldZ: wz,
+      });
+
       // Right window
       const rwMesh = this.createWindow(-(halfW - 0.01), wz);
       windowMeshes.push(rwMesh);
       g.add(rwMesh);
+      this.windows.push({
+        mesh: rwMesh,
+        hp: WINDOW_MAX_HP,
+        maxHp: WINDOW_MAX_HP,
+        broken: false,
+        carIndex,
+        side: 'right',
+        worldX: -halfW,
+        worldZ: wz,
+      });
     }
 
     // Roof — each car gets its own material for per-car transparency
@@ -178,7 +212,7 @@ export class TrainRenderer {
     return mesh;
   }
 
-  private createEndWall(z: number, isFront: boolean): THREE.Mesh {
+  private createEndWall(z: number, _isFront: boolean): THREE.Mesh {
     // End wall with a door-sized gap simulated by just showing the top part
     const wallH = CAR_HEIGHT - DOOR_HEIGHT;
     const geo = new THREE.BoxGeometry(CAR_WIDTH, wallH, WALL_THICKNESS);
@@ -304,7 +338,7 @@ export class TrainRenderer {
         body.position.set(0, 0.3, 0);
         body.castShadow = true;
         g.add(body);
-        // Burner (glowing ring)
+        // Burner
         const burner = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.02, 8, 16), Mat.fire());
         burner.rotation.x = -Math.PI / 2;
         burner.position.set(0, 0.62, 0);
@@ -315,7 +349,6 @@ export class TrainRenderer {
         const box = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.3), Mat.furnitureFirstAid());
         box.position.set(0, 0.15, 0);
         g.add(box);
-        // Red cross
         const crossH = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.02), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
         crossH.position.set(0, 0.15, 0.16);
         g.add(crossH);
@@ -328,7 +361,6 @@ export class TrainRenderer {
         const pot = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.3, 0.4), Mat.furniturePlantBox());
         pot.position.set(0, 0.15, 0);
         g.add(pot);
-        // Plants (simple green cylinders)
         for (let px = -0.15; px <= 0.15; px += 0.15) {
           const plant = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.4, 6), Mat.treeLeaves());
           plant.position.set(px, 0.5, 0);
@@ -341,7 +373,6 @@ export class TrainRenderer {
         crate.position.set(0, 0.25, 0);
         crate.castShadow = true;
         g.add(crate);
-        // Lid line
         const lid = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.04, 0.72), Mat.furnitureWorkbench());
         lid.position.set(0, 0.51, 0);
         g.add(lid);
@@ -351,6 +382,67 @@ export class TrainRenderer {
 
     g.position.copy(pos);
     return { mesh: g, type, worldPos: pos };
+  }
+
+  // --- Window damage system ---
+
+  /** Damage a window, returns true if it just broke */
+  public damageWindow(win: WindowState3D, amount: number): boolean {
+    if (win.broken) return false;
+    win.hp = Math.max(0, win.hp - amount);
+
+    // Update visual
+    if (win.hp <= 0) {
+      win.broken = true;
+      win.mesh.material = Mat.trainWindowBroken();
+      // Scale down to show it's a hole
+      win.mesh.scale.set(1, 0.3, 0.3);
+      return true;
+    } else if (win.hp < win.maxHp * 0.5) {
+      win.mesh.material = Mat.trainWindowDamaged();
+    }
+    return false;
+  }
+
+  /** Repair a window */
+  public repairWindow(win: WindowState3D): void {
+    win.hp = win.maxHp;
+    win.broken = false;
+    win.mesh.material = Mat.trainWindow();
+    win.mesh.scale.set(1, 1, 1);
+  }
+
+  /** Find nearest window to a world position */
+  public getNearestWindow(x: number, z: number, maxDist: number): WindowState3D | null {
+    let nearest: WindowState3D | null = null;
+    let bestDist = maxDist;
+    for (const w of this.windows) {
+      const dx = x - w.worldX;
+      const dz = z - w.worldZ;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < bestDist) {
+        bestDist = dist;
+        nearest = w;
+      }
+    }
+    return nearest;
+  }
+
+  /** Find nearest broken window to a position */
+  public getNearestBrokenWindow(x: number, z: number, maxDist: number): WindowState3D | null {
+    let nearest: WindowState3D | null = null;
+    let bestDist = maxDist;
+    for (const w of this.windows) {
+      if (!w.broken) continue;
+      const dx = x - w.worldX;
+      const dz = z - w.worldZ;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < bestDist) {
+        bestDist = dist;
+        nearest = w;
+      }
+    }
+    return nearest;
   }
 
   /** Get the Z-center of the train */
