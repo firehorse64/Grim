@@ -116,9 +116,13 @@ export class TrainRenderer {
       g.add(rwMesh);
     }
 
-    // Roof
+    // Roof — each car gets its own material for per-car transparency
     const roofGeo = new THREE.BoxGeometry(CAR_WIDTH + 0.1, 0.1, CAR_LENGTH + 0.1);
-    const roofMesh = new THREE.Mesh(roofGeo, Mat.trainRoof());
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: 0x4a5a6a, metalness: 0.3, roughness: 0.5,
+      transparent: true, opacity: 1.0,
+    });
+    const roofMesh = new THREE.Mesh(roofGeo, roofMat);
     roofMesh.position.set(0, FLOOR_Y + CAR_HEIGHT, zCenter);
     roofMesh.castShadow = true;
     g.add(roofMesh);

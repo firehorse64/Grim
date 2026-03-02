@@ -400,6 +400,9 @@ export class GameEngine {
       this.playerPos.x *= 0.9;
     }
 
+    // Roof transparency — hide roof of current car, make others semi-transparent
+    this.updateRoofVisibility();
+
     // Emit HUD
     this.emitHud();
   }
@@ -410,8 +413,8 @@ export class GameEngine {
 
   private updatePlayer(dt: number, inp: InputManager3D['state']): void {
     const speed = PLAYER_SPEED * this.playerSpeedMult * dt * 0.02; // scale for 3D units
-    let dx = inp.moveX * speed;
-    let dz = inp.moveZ * speed;
+    let dx = -inp.moveX * speed;
+    let dz = -inp.moveZ * speed;
 
     // Normalize diagonal
     if (dx !== 0 && dz !== 0) {
@@ -1060,6 +1063,39 @@ export class GameEngine {
     );
     this.directionalLight.target.position.copy(this.playerPos);
     this.directionalLight.target.updateMatrixWorld();
+  }
+
+  // ===========================================
+  // ROOF VISIBILITY
+  // ===========================================
+
+  private updateRoofVisibility(): void {
+    const playerCarIndex = this.trainRenderer.getCarIndexAt(this.playerPos.z);
+
+    for (let i = 0; i < this.trainRenderer.cars.length; i++) {
+      const car = this.trainRenderer.cars[i];
+      const roofMat = car.roofMesh.material as THREE.MeshStandardMaterial;
+
+      if (i === playerCarIndex) {
+        // Player is inside this car — hide roof completely
+        roofMat.opacity = 0;
+        roofMat.transparent = true;
+        car.roofMesh.castShadow = false;
+      } else {
+        // Other cars — semi-transparent so player can see the train structure
+        roofMat.opacity = 0.25;
+        roofMat.transparent = true;
+        car.roofMesh.castShadow = false;
+      }
+    }
+
+    // When exploring outside, show all roofs at low opacity
+    if (this.explorationActive) {
+      for (const car of this.trainRenderer.cars) {
+        const roofMat = car.roofMesh.material as THREE.MeshStandardMaterial;
+        roofMat.opacity = 0.3;
+      }
+    }
   }
 
   // ===========================================
