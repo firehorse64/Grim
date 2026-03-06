@@ -12,6 +12,7 @@ import {
   animateWalk, animateMeleeSwing, animateZombieLurch, animateZombieAttack,
   animateWindowCrawl, createRagdoll, createBullet, createPickupMesh,
 } from '../rendering/CharacterRenderer';
+import { ModelLoader } from '../rendering/ModelLoader';
 import { HudOverlay, HudData } from '../ui/HudOverlay';
 import {
   showMainMenu, showPauseMenu, showGameOver,
@@ -148,6 +149,9 @@ export class GameEngine {
   constructor() {}
 
   public async init(): Promise<void> {
+    // Pre-load custom GLTF models (silently skips missing files)
+    await ModelLoader.init();
+
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));

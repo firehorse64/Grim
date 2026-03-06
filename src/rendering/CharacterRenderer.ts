@@ -1,9 +1,11 @@
 /**
  * Procedural 3D character models — player, zombies, NPCs.
+ * Supports both procedural box characters and loaded GLTF models.
  * Feet at local y=0 so group.position.y = surface height.
  */
 import * as THREE from 'three';
 import * as Mat from './Materials';
+import { ModelLoader, LoadedModel, ModelSlot } from './ModelLoader';
 
 // Character part positions — feet at local y=0
 const LEG_Y = 0.225;
@@ -20,6 +22,9 @@ export interface CharacterMesh {
   legL: THREE.Mesh;
   legR: THREE.Mesh;
   animTime: number;
+  // GLTF model support
+  loadedModel: LoadedModel | null;
+  currentAnim: string;
 }
 
 export interface RagdollPart {
@@ -59,10 +64,45 @@ function createCharacter(bodyMat: THREE.Material, headMat: THREE.Material, legMa
   legR.position.set(0.1, LEG_Y, 0);
   group.add(legR);
 
-  return { group, bodyMesh, headMesh, armL, armR, legL, legR, animTime: 0 };
+  return { group, bodyMesh, headMesh, armL, armR, legL, legR, animTime: 0, loadedModel: null, currentAnim: '' };
+}
+
+/**
+ * Try to create a character from a loaded GLTF model.
+ * Returns a CharacterMesh with the loaded model's scene as the group.
+ * Procedural mesh fields (bodyMesh, etc.) are set to dummy meshes.
+ */
+function createFromGLTF(slot: ModelSlot): CharacterMesh | null {
+  const model = ModelLoader.get(slot);
+  if (!model) return null;
+
+  const group = model.scene;
+  // Dummy mesh refs (not used when GLTF model is active)
+  const dummy = new THREE.Mesh();
+  const char: CharacterMesh = {
+    group,
+    bodyMesh: dummy,
+    headMesh: dummy,
+    armL: dummy,
+    armR: dummy,
+    legL: dummy,
+    legR: dummy,
+    animTime: 0,
+    loadedModel: model,
+    currentAnim: '',
+  };
+
+  // Auto-play idle animation if available
+  ModelLoader.playAnimation(model, 'idle');
+  char.currentAnim = 'idle';
+
+  return char;
 }
 
 export function createPlayer(): CharacterMesh {
+  const fromModel = createFromGLTF('player');
+  if (fromModel) return fromModel;
+
   const char = createCharacter(Mat.playerBody(), Mat.playerHead(), Mat.playerLegs());
   const backpack = new THREE.Mesh(
     new THREE.BoxGeometry(0.3, 0.35, 0.15),
@@ -74,6 +114,9 @@ export function createPlayer(): CharacterMesh {
 }
 
 export function createZombie(): CharacterMesh {
+  const fromModel = createFromGLTF('zombie');
+  if (fromModel) return fromModel;
+
   const char = createCharacter(Mat.zombieBody(), Mat.zombieHead(), Mat.zombieBody());
   char.bodyMesh.rotation.x = 0.2;
   char.headMesh.rotation.x = 0.15;
@@ -81,11 +124,45 @@ export function createZombie(): CharacterMesh {
 }
 
 export function createNPC(): CharacterMesh {
+  const fromModel = createFromGLTF('npc');
+  if (fromModel) return fromModel;
+
   return createCharacter(Mat.npcBody(), Mat.npcHead(), Mat.playerLegs());
+}
+
+/**
+ * Update animation mixer for GLTF models. Call every frame for each active character.
+ */
+export function updateModelAnimation(char: CharacterMesh, dt: number): void {
+  if (char.loadedModel?.mixer) {
+    char.loadedModel.mixer.update(dt);
+  }
+}
+
+/**
+ * Switch a GLTF model to a named animation (no-op if already playing).
+ */
+function switchAnim(char: CharacterMesh, name: string): void {
+  if (!char.loadedModel) return;
+  if (char.currentAnim === name) return;
+  char.currentAnim = name;
+  ModelLoader.playAnimation(char.loadedModel, name);
 }
 
 /** Walking animation with idle breathing when stationary */
 export function animateWalk(char: CharacterMesh, speed: number, dt: number): void {
+  // GLTF model path
+  if (char.loadedModel) {
+    updateModelAnimation(char, dt);
+    if (speed < 0.01) {
+      switchAnim(char, 'idle');
+    } else {
+      switchAnim(char, 'walk');
+    }
+    return;
+  }
+
+  // Procedural path
   if (speed < 0.01) {
     char.animTime += dt * 1.5;
     const breathe = Math.sin(char.animTime) * 0.01;
@@ -107,6 +184,12 @@ export function animateWalk(char: CharacterMesh, speed: number, dt: number): voi
 
 /** Melee swing animation */
 export function animateMeleeSwing(char: CharacterMesh): void {
+  if (char.loadedModel) {
+    ModelLoader.playAnimation(char.loadedModel, 'attack', { loop: THREE.LoopOnce, fadeTime: 0.1 });
+    char.currentAnim = 'attack';
+    return;
+  }
+
   const startTime = performance.now();
   const duration = 250;
   const doSwing = () => {
@@ -127,6 +210,12 @@ export function animateMeleeSwing(char: CharacterMesh): void {
 
 /** Zombie lurch/stumble walk */
 export function animateZombieLurch(char: CharacterMesh, dt: number): void {
+  if (char.loadedModel) {
+    updateModelAnimation(char, dt);
+    switchAnim(char, 'walk');
+    return;
+  }
+
   char.animTime += dt * 3;
   const lurch = Math.sin(char.animTime) * 0.15;
   char.bodyMesh.rotation.z = lurch;
@@ -140,6 +229,12 @@ export function animateZombieLurch(char: CharacterMesh, dt: number): void {
 
 /** Zombie attack lunge — arms reach forward */
 export function animateZombieAttack(char: CharacterMesh): void {
+  if (char.loadedModel) {
+    ModelLoader.playAnimation(char.loadedModel, 'attack', { loop: THREE.LoopOnce, fadeTime: 0.1 });
+    char.currentAnim = 'attack';
+    return;
+  }
+
   const startTime = performance.now();
   const duration = 400;
   const doAttack = () => {
@@ -160,11 +255,18 @@ export function animateZombieAttack(char: CharacterMesh): void {
 
 /** Zombie window crawl animation — body tilts forward, arms reach */
 export function animateWindowCrawl(char: CharacterMesh): void {
+  if (char.loadedModel) {
+    // Try 'crawl' animation, fall back to 'walk'
+    const action = ModelLoader.playAnimation(char.loadedModel, 'crawl', { loop: THREE.LoopOnce, fadeTime: 0.1 });
+    if (!action) ModelLoader.playAnimation(char.loadedModel, 'walk');
+    char.currentAnim = 'crawl';
+    return;
+  }
+
   const startTime = performance.now();
   const duration = 800;
   const doCrawl = () => {
     const t = Math.min((performance.now() - startTime) / duration, 1);
-    // Tilt body forward like climbing through
     char.bodyMesh.rotation.x = 0.2 + t * 0.8;
     char.headMesh.rotation.x = 0.15 - t * 0.3;
     char.armL.rotation.x = -t * 1.2;
@@ -173,7 +275,6 @@ export function animateWindowCrawl(char: CharacterMesh): void {
     char.legR.rotation.x = -t * 0.4;
     if (t < 1) requestAnimationFrame(doCrawl);
     else {
-      // Reset to hunched zombie pose
       char.bodyMesh.rotation.x = 0.2;
       char.headMesh.rotation.x = 0.15;
       char.armL.rotation.x = 0;
