@@ -55,12 +55,14 @@ export const EAT_RESTORE_AMOUNT = 30;
 export const TRAIN_SCROLL_SPEED = 80;  // px/s exterior scrolls when train moves
 
 // Zombies (ambient / exterior)
-export const ZOMBIE_AMBIENT_SPEED = 40;
-export const ZOMBIE_CHASE_SPEED = 90;
+export const ZOMBIE_AMBIENT_SPEED = 18;
+export const ZOMBIE_CHASE_SPEED = 38;
 export const ZOMBIE_AGGRO_RANGE = 180;
-export const ZOMBIE_DAMAGE = 15;
-export const ZOMBIE_ATTACK_COOLDOWN_MS = 1200;
-export const AMBIENT_ZOMBIE_SPAWN_INTERVAL = 3000;  // ms between ambient spawns
+export const ZOMBIE_DAMAGE = 5;
+export const ZOMBIE_ATTACK_COOLDOWN_MS = 2000;
+export const AMBIENT_ZOMBIE_SPAWN_INTERVAL = 2000;  // ms between ambient spawns
+export const ZOMBIE_SPAWN_RADIUS = 25;              // how far from player zombies spawn
+export const ZOMBIE_MAX_COUNT = 40;                  // max zombies at once
 
 // Exploration
 export const EXPLORE_AREA_WIDTH = 800;

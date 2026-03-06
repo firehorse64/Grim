@@ -87,10 +87,10 @@ export class InputManager3D {
     s.moveX = 0;
     s.moveZ = 0;
 
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) s.moveX -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) s.moveX += 1;
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) s.moveZ -= 1;
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) s.moveZ += 1;
+    if (this.keys.has('KeyA')) s.moveX -= 1;
+    if (this.keys.has('KeyD')) s.moveX += 1;
+    if (this.keys.has('KeyW')) s.moveZ -= 1;
+    if (this.keys.has('KeyS')) s.moveZ += 1;
 
     s.interact = this.keysJustDown.has('KeyE');
     s.attack = this.keysJustDown.has('Space');
@@ -103,9 +103,9 @@ export class InputManager3D {
     s.speedDown = this.keysJustDown.has('Minus');
     s.sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
 
-    // Keyboard camera rotation (hold comma/period)
-    s.cameraRotateLeft = this.keys.has('Comma') || this.keys.has('BracketLeft');
-    s.cameraRotateRight = this.keys.has('Period') || this.keys.has('BracketRight');
+    // Keyboard camera rotation (hold comma/period or arrow keys)
+    s.cameraRotateLeft = this.keys.has('Comma') || this.keys.has('BracketLeft') || this.keys.has('ArrowLeft');
+    s.cameraRotateRight = this.keys.has('Period') || this.keys.has('BracketRight') || this.keys.has('ArrowRight');
 
     s.mouseX = this._mouseX;
     s.mouseY = this._mouseY;

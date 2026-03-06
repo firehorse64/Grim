@@ -50,6 +50,9 @@ export class EnvironmentRenderer {
     // Grass, bushes, flowers
     this.createFlora();
 
+    // Dense grass near tracks
+    this.createTrackGrass();
+
     // Exploration area
     this.group.add(this.explorationGroup);
   }
@@ -74,7 +77,7 @@ export class EnvironmentRenderer {
     const trunkGeo = new THREE.CylinderGeometry(0.1, 0.15, 2.5, 6);
     const leafGeo = new THREE.SphereGeometry(0.8, 6, 6);
 
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 200; i++) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const x = side * (4 + Math.random() * 40);
       const z = randomBetween(-50, RAIL_LENGTH - 50);
@@ -107,9 +110,9 @@ export class EnvironmentRenderer {
     // Flowers
     const flowerColors = [0xff6688, 0xffcc44, 0xaa66ff, 0xff8844, 0x66aaff];
 
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 600; i++) {
       const side = Math.random() < 0.5 ? -1 : 1;
-      const x = side * (3 + Math.random() * 35);
+      const x = side * (2 + Math.random() * 50);
       const z = randomBetween(-50, RAIL_LENGTH - 50);
 
       const type = Math.random();
@@ -171,6 +174,36 @@ export class EnvironmentRenderer {
         this.flora.push(flower);
         this.group.add(flower);
       }
+    }
+  }
+
+  private createTrackGrass(): void {
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0x5a8a3a, roughness: 1.0 });
+    const grassGeo = new THREE.ConeGeometry(0.06, 0.25, 3);
+    for (let i = 0; i < 300; i++) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const x = side * (2 + Math.random() * 2);
+      const z = randomBetween(-50, RAIL_LENGTH - 50);
+      const tuft = new THREE.Group();
+      const count = 2 + Math.floor(Math.random() * 4);
+      for (let j = 0; j < count; j++) {
+        const blade = new THREE.Mesh(grassGeo, grassMat);
+        blade.position.set(
+          (Math.random() - 0.5) * 0.15,
+          0.12,
+          (Math.random() - 0.5) * 0.15,
+        );
+        blade.rotation.set(
+          (Math.random() - 0.5) * 0.4,
+          Math.random() * Math.PI,
+          (Math.random() - 0.5) * 0.4,
+        );
+        blade.scale.setScalar(0.6 + Math.random() * 0.5);
+        tuft.add(blade);
+      }
+      tuft.position.set(x, 0, z);
+      this.flora.push(tuft);
+      this.group.add(tuft);
     }
   }
 

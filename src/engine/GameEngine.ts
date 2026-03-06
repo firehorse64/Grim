@@ -35,6 +35,7 @@ import {
   ENGINE_DEGRADE_PER_SEC, BRAKE_DEGRADE_PER_SEC, MAINTENANCE_WARNING_THRESHOLD,
   REPAIR_AMOUNT, REPAIR_MATERIAL_COST, LOW_STAT_THRESHOLD,
   HUNGER_MAX, ENERGY_MAX, ZOMBIE_WINDOW_DAMAGE, WINDOW_MAX_HP,
+  ZOMBIE_SPAWN_RADIUS, ZOMBIE_MAX_COUNT,
 } from '../data/BalanceConstants';
 import { SurvivalState, WeaponType, InventoryItem } from '../types/GameTypes';
 
@@ -133,7 +134,7 @@ export class GameEngine {
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_SURFACE_Y);
 
-  private cameraOrbitAngle = 0;
+  private cameraOrbitAngle = Math.PI / 2;
   private cameraOrbitPitch = 0.6;
   private cameraDistance = 12;
   private cameraHeight = 10;
@@ -153,6 +154,8 @@ export class GameEngine {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setClearColor(0x1a1a2e);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
 
     const container = document.getElementById('game-container')!;
     container.appendChild(this.renderer.domElement);
@@ -164,19 +167,23 @@ export class GameEngine {
     this.camera.position.set(0, 12, -4);
     this.camera.lookAt(0, FLOOR_Y, 10);
 
-    this.ambientLight = new THREE.AmbientLight(0x667788, 0.6);
+    this.ambientLight = new THREE.AmbientLight(0x8899aa, 0.8);
     this.scene.add(this.ambientLight);
 
-    this.directionalLight = new THREE.DirectionalLight(0xffeedd, 1.2);
-    this.directionalLight.position.set(10, 20, 10);
+    // Hemisphere light for natural sky/ground color blending
+    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.4);
+    this.scene.add(hemiLight);
+
+    this.directionalLight = new THREE.DirectionalLight(0xfff5e0, 1.5);
+    this.directionalLight.position.set(15, 25, 10);
     this.directionalLight.castShadow = true;
     this.directionalLight.shadow.mapSize.set(2048, 2048);
     this.directionalLight.shadow.camera.near = 0.5;
-    this.directionalLight.shadow.camera.far = 60;
-    this.directionalLight.shadow.camera.left = -20;
-    this.directionalLight.shadow.camera.right = 20;
-    this.directionalLight.shadow.camera.top = 20;
-    this.directionalLight.shadow.camera.bottom = -20;
+    this.directionalLight.shadow.camera.far = 80;
+    this.directionalLight.shadow.camera.left = -30;
+    this.directionalLight.shadow.camera.right = 30;
+    this.directionalLight.shadow.camera.top = 30;
+    this.directionalLight.shadow.camera.bottom = -30;
     this.scene.add(this.directionalLight);
 
     this.envRenderer = new EnvironmentRenderer();
@@ -242,9 +249,40 @@ export class GameEngine {
     this.dayTimer = 0;
     this.currentWeapon = WeaponType.RIFLE;
     this.explorationActive = false;
-    this.cameraOrbitAngle = 0;
+    this.cameraOrbitAngle = Math.PI / 2;
     this.interiorLightsOn = true;
     this.trainRenderer.setInteriorLights(true);
+
+    // Clear all zombies
+    for (const z of this.zombies) {
+      this.scene.remove(z.mesh.group);
+    }
+    this.zombies = [];
+    this.zombieSpawnTimer = 0;
+
+    // Clear all bullets
+    for (const b of this.bullets) {
+      this.scene.remove(b.mesh);
+    }
+    this.bullets = [];
+
+    // Clear ragdoll parts
+    for (const p of this.ragdollParts) {
+      this.scene.remove(p.mesh);
+    }
+    this.ragdollParts = [];
+
+    // Clear exploration pickups
+    for (const p of this.explorationPickups) {
+      if (!p.collected) this.scene.remove(p.mesh);
+    }
+    this.explorationPickups = [];
+    this.envRenderer.clearExploration();
+
+    // Repair all windows
+    for (const w of this.trainRenderer.windows) {
+      this.trainRenderer.repairWindow(w);
+    }
 
     this.survival = { hunger: HUNGER_MAX, energy: ENERGY_MAX, health: PLAYER_MAX_HP };
     this.survivalManager = new SurvivalManager(this.survival);
@@ -253,9 +291,15 @@ export class GameEngine {
     this.crafting = new CraftingManager();
     this.crafting.create();
 
+    // Reset lighting to DAY
+    this.updateLighting();
+    this.envRenderer.setSkyPhase('DAY');
+
     this.playerPos.set(0, FLOOR_SURFACE_Y, CAR_LENGTH / 2);
     this.audio.resume();
     this.hud.showFloatingText('Riverside Station — Destination: Millfield. Start the train at the brake panel!');
+
+    this.uiOpen = false;
 
     if (!this.clock.running) {
       this.clock.start();
@@ -482,14 +526,23 @@ export class GameEngine {
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
     animateMeleeSwing(this.playerMesh);
+    const bounds = this.trainRenderer.getBounds();
+    const playerInside = !this.explorationActive;
 
     for (const z of this.zombies) {
       if (!z.alive) continue;
       const zPos = z.mesh.group.position;
       const dist = distance(px, pz, zPos.x, zPos.z);
-      if (dist < 1.5) {
+      if (dist < 2.0) {
         const toZ = new THREE.Vector3(zPos.x - px, 0, zPos.z - pz).normalize();
         if (this.playerFacing.dot(toZ) > -0.2) {
+          // Check wall blocking: if player is inside and zombie is outside,
+          // only allow hitting through windows, not through walls
+          if (playerInside && !z.insideTrain) {
+            const nearWin = this.trainRenderer.getNearestWindow(zPos.x, zPos.z, 2.0);
+            if (!nearWin) continue; // blocked by wall
+          }
+
           z.hp -= MELEE_DAMAGE;
           const knock = toZ.clone().multiplyScalar(3);
           knock.y = 1;
@@ -503,10 +556,29 @@ export class GameEngine {
   }
 
   private updateBullets(dt: number): void {
+    const bounds = this.trainRenderer.getBounds();
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const b = this.bullets[i];
+      const prevPos = b.mesh.position.clone();
       b.mesh.position.addScaledVector(b.dir, b.speed * dt * 60);
       b.life -= dt * 1000;
+
+      // Check if bullet crosses a train wall (stop it unless through a window)
+      const bulletInside = b.mesh.position.x > bounds.minX && b.mesh.position.x < bounds.maxX &&
+                           b.mesh.position.z > bounds.minZ && b.mesh.position.z < bounds.maxZ;
+      const wasInside = prevPos.x > bounds.minX && prevPos.x < bounds.maxX &&
+                        prevPos.z > bounds.minZ && prevPos.z < bounds.maxZ;
+      if (bulletInside !== wasInside) {
+        // Bullet crossed a wall boundary — check if there's a window nearby
+        const nearWin = this.trainRenderer.getNearestWindow(b.mesh.position.x, b.mesh.position.z, 1.0);
+        if (!nearWin) {
+          // Blocked by wall
+          this.scene.remove(b.mesh);
+          this.bullets.splice(i, 1);
+          continue;
+        }
+      }
+
       let hit = false;
       for (const z of this.zombies) {
         if (!z.alive) continue;
@@ -773,7 +845,7 @@ export class GameEngine {
     const spawnInterval = AMBIENT_ZOMBIE_SPAWN_INTERVAL / spawnMult;
 
     this.zombieSpawnTimer += dtMs;
-    if (this.zombieSpawnTimer > spawnInterval && this.zombies.length < 15) {
+    if (this.zombieSpawnTimer > spawnInterval && this.zombies.length < ZOMBIE_MAX_COUNT) {
       this.zombieSpawnTimer = 0;
       this.spawnAmbientZombie();
     }
@@ -806,8 +878,8 @@ export class GameEngine {
 
       const distToPlayer = distance(zPos.x, zPos.z, px, pz);
 
-      if (distToPlayer < aggroRange) {
-        // Chase player
+      if (z.insideTrain && distToPlayer < aggroRange) {
+        // Inside train: chase and attack player directly
         const dir = new THREE.Vector3(px - zPos.x, 0, pz - zPos.z).normalize();
         const spd = ZOMBIE_CHASE_SPEED * 0.015 * dt;
         zPos.x += dir.x * spd;
@@ -815,7 +887,6 @@ export class GameEngine {
         z.mesh.group.rotation.y = Math.atan2(dir.x, dir.z);
         animateZombieLurch(z.mesh, dt);
 
-        // Attack player when close
         if (distToPlayer < 1.0) {
           z.attackCooldown -= dtMs;
           if (z.attackCooldown <= 0) {
@@ -826,19 +897,67 @@ export class GameEngine {
             if (this.survival.health <= 0) this.gameOver();
           }
         }
-      } else if (z.ambient && !z.insideTrain) {
-        // Wander toward the train (instead of standing still)
-        const trainCenterZ = this.trainRenderer.getCenter();
-        const toTrainX = -zPos.x * 0.3;
-        const toTrainZ = (trainCenterZ - zPos.z) * 0.1;
-        const wanderSpeed = ZOMBIE_AMBIENT_SPEED * 0.01 * dt;
-        zPos.x += toTrainX * wanderSpeed;
-        zPos.z += toTrainZ * wanderSpeed;
+      } else if (!z.insideTrain) {
+        // Outside: head towards the nearest window
+        const nearWin = this.trainRenderer.getNearestWindow(zPos.x, zPos.z, 30);
+        if (nearWin) {
+          const targetX = nearWin.worldX + (nearWin.side === 'left' ? 0.5 : -0.5);
+          const targetZ = nearWin.worldZ;
+          const dir = new THREE.Vector3(targetX - zPos.x, 0, targetZ - zPos.z);
+          const distToWin = dir.length();
+          if (distToWin > 0.1) {
+            dir.normalize();
+            const spd = ZOMBIE_CHASE_SPEED * 0.015 * dt;
+            zPos.x += dir.x * spd;
+            zPos.z += dir.z * spd;
+            z.mesh.group.rotation.y = Math.atan2(dir.x, dir.z);
+          }
+          animateZombieLurch(z.mesh, dt);
+
+          // If at a window, attack it or crawl through
+          if (distToWin < 1.5) {
+            if (!nearWin.broken) {
+              z.attackCooldown -= dtMs;
+              if (z.attackCooldown <= 0) {
+                z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
+                const justBroke = this.trainRenderer.damageWindow(nearWin, ZOMBIE_WINDOW_DAMAGE);
+                animateZombieAttack(z.mesh);
+                if (justBroke) this.hud.showFloatingText('Window broken!');
+              }
+              // Zombie at window can damage player if player is near the window (inside)
+              if (this.isPlayerNearWindow(nearWin, 1.5)) {
+                z.attackCooldown -= dtMs;
+                if (z.attackCooldown <= 0) {
+                  z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
+                  this.survival.health = Math.max(0, this.survival.health - ZOMBIE_DAMAGE);
+                  this.hud.showFloatingText(`-${ZOMBIE_DAMAGE}`);
+                  if (this.survival.health <= 0) this.gameOver();
+                }
+              }
+            } else {
+              // Window is broken, crawl through
+              z.insideTrain = true;
+              z.ambient = false;
+              const insideX = nearWin.side === 'left' ? nearWin.worldX - 0.8 : nearWin.worldX + 0.8;
+              zPos.set(insideX, FLOOR_SURFACE_Y, nearWin.worldZ);
+              animateWindowCrawl(z.mesh);
+              this.hud.showFloatingText('Zombie broke in!');
+            }
+          }
+        } else {
+          // No window nearby, wander toward train
+          const trainCenterZ = this.trainRenderer.getCenter();
+          const toTrainX = -zPos.x * 0.3;
+          const toTrainZ = (trainCenterZ - zPos.z) * 0.1;
+          const wanderSpeed = ZOMBIE_AMBIENT_SPEED * 0.01 * dt;
+          zPos.x += toTrainX * wanderSpeed;
+          zPos.z += toTrainZ * wanderSpeed;
+          animateZombieLurch(z.mesh, dt);
+        }
 
         if (this.trainMoving) {
           zPos.z += this.trainSpeed * 0.02 * dt;
         }
-        animateZombieLurch(z.mesh, dt);
       } else {
         animateWalk(z.mesh, 0, dt);
       }
@@ -847,7 +966,7 @@ export class GameEngine {
         this.handleZombieTrainCollision(z, dt, bounds);
       }
 
-      if (Math.abs(zPos.z - pz) > 50) {
+      if (Math.abs(zPos.z - pz) > 80) {
         this.scene.remove(z.mesh.group);
         this.zombies.splice(i, 1);
       }
@@ -891,30 +1010,14 @@ export class GameEngine {
       }
     }
 
-    if (!this.trainMoving) {
-      const nearWin = this.trainRenderer.getNearestWindow(zx, zz, 2.0);
-      if (nearWin && !nearWin.broken) {
-        z.attackCooldown -= dt * 1000;
-        if (z.attackCooldown <= 0) {
-          z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
-          const justBroke = this.trainRenderer.damageWindow(nearWin, ZOMBIE_WINDOW_DAMAGE);
-          if (justBroke) this.hud.showFloatingText('Window broken!');
-        }
-      } else if (nearWin && nearWin.broken) {
-        z.insideTrain = true;
-        z.ambient = false;
-        const insideX = nearWin.side === 'left' ? nearWin.worldX - 0.8 : nearWin.worldX + 0.8;
-        zPos.set(insideX, FLOOR_SURFACE_Y, nearWin.worldZ);
-        animateWindowCrawl(z.mesh);
-        this.hud.showFloatingText('Zombie broke in!');
-      }
-    }
+    // Window interactions are now handled in updateZombies main loop
   }
 
   private spawnAmbientZombie(): void {
     const side = Math.random() < 0.5 ? -1 : 1;
-    const x = side * (CAR_WIDTH / 2 + 2 + Math.random() * 4);
-    const z = this.playerPos.z + (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 8);
+    const x = side * (CAR_WIDTH / 2 + 3 + Math.random() * ZOMBIE_SPAWN_RADIUS);
+    const trainCenter = this.trainRenderer.getCenter();
+    const z = trainCenter + (Math.random() - 0.5) * ZOMBIE_SPAWN_RADIUS * 2;
     const mesh = createZombie();
     mesh.group.position.set(x, GROUND_Y, z);
     this.scene.add(mesh.group);
@@ -934,6 +1037,27 @@ export class GameEngine {
     this.scene.remove(z.mesh.group);
     const idx = this.zombies.indexOf(z);
     if (idx >= 0) this.zombies.splice(idx, 1);
+  }
+
+  /** Check if the player is near a specific window (from the inside) */
+  private isPlayerNearWindow(win: { worldX: number; worldZ: number; side: string }, maxDist: number): boolean {
+    const px = this.playerPos.x;
+    const pz = this.playerPos.z;
+    const dz = Math.abs(pz - win.worldZ);
+    if (dz > maxDist) return false;
+    // Player must be on the inside (opposite side of the window from the zombie)
+    if (win.side === 'left') {
+      return px > win.worldX - maxDist && px < win.worldX;
+    } else {
+      return px < win.worldX + maxDist && px > win.worldX;
+    }
+  }
+
+  /** Check if a zombie is at a window (from the outside) */
+  private isZombieAtWindow(zPos: THREE.Vector3): { atWindow: boolean; window: import('../rendering/TrainRenderer').WindowState3D | null } {
+    const nearWin = this.trainRenderer.getNearestWindow(zPos.x, zPos.z, 2.0);
+    if (!nearWin) return { atWindow: false, window: null };
+    return { atWindow: true, window: nearWin };
   }
 
   // ===== RAGDOLL =====
@@ -1081,28 +1205,28 @@ export class GameEngine {
   private updateLighting(): void {
     switch (this.timeOfDay) {
       case 'DAY':
-        this.ambientLight.intensity = 0.6;
-        this.directionalLight.intensity = 1.2;
-        this.directionalLight.color.setHex(0xffeedd);
-        this.scene.fog = new THREE.FogExp2(0x8899aa, 0.008);
+        this.ambientLight.intensity = 0.8;
+        this.directionalLight.intensity = 1.5;
+        this.directionalLight.color.setHex(0xfff5e0);
+        this.scene.fog = new THREE.FogExp2(0x9aabbf, 0.006);
         break;
       case 'DAWN':
-        this.ambientLight.intensity = 0.4;
-        this.directionalLight.intensity = 0.8;
-        this.directionalLight.color.setHex(0xddaa66);
-        this.scene.fog = new THREE.FogExp2(0x887766, 0.01);
+        this.ambientLight.intensity = 0.5;
+        this.directionalLight.intensity = 1.0;
+        this.directionalLight.color.setHex(0xffbb77);
+        this.scene.fog = new THREE.FogExp2(0xaa8866, 0.008);
         break;
       case 'DUSK':
-        this.ambientLight.intensity = 0.35;
-        this.directionalLight.intensity = 0.7;
-        this.directionalLight.color.setHex(0xcc6644);
-        this.scene.fog = new THREE.FogExp2(0x665544, 0.012);
+        this.ambientLight.intensity = 0.4;
+        this.directionalLight.intensity = 0.8;
+        this.directionalLight.color.setHex(0xee7744);
+        this.scene.fog = new THREE.FogExp2(0x776655, 0.01);
         break;
       case 'NIGHT':
-        this.ambientLight.intensity = 0.15;
-        this.directionalLight.intensity = 0.3;
-        this.directionalLight.color.setHex(0x4466aa);
-        this.scene.fog = new THREE.FogExp2(0x112233, 0.02);
+        this.ambientLight.intensity = 0.2;
+        this.directionalLight.intensity = 0.35;
+        this.directionalLight.color.setHex(0x5577bb);
+        this.scene.fog = new THREE.FogExp2(0x1a2233, 0.015);
         break;
     }
   }
@@ -1314,6 +1438,7 @@ export class GameEngine {
   // ===== GAME OVER =====
 
   private gameOver(): void {
+    if (this.phase === 'GAMEOVER') return; // prevent double trigger
     this.phase = 'GAMEOVER';
     showGameOver("You didn't survive...", () => this.startNewGame());
   }
