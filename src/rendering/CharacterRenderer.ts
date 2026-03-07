@@ -123,6 +123,51 @@ export function createZombie(): CharacterMesh {
   return char;
 }
 
+/** Crawler zombie — low to the ground, dragging itself */
+export function createCrawler(): CharacterMesh {
+  const char = createCharacter(Mat.crawlerBody(), Mat.crawlerHead(), Mat.crawlerBody());
+  // Flatten the body to look like it's crawling
+  char.group.scale.set(1.1, 0.5, 1.3);
+  char.bodyMesh.rotation.x = 0.8;
+  char.headMesh.rotation.x = -0.3;
+  char.armL.rotation.x = -1.2;
+  char.armR.rotation.x = -1.0;
+  return char;
+}
+
+/** Runner zombie — lean, fast, hunched forward */
+export function createRunner(): CharacterMesh {
+  const char = createCharacter(Mat.runnerBody(), Mat.runnerHead(), Mat.runnerBody());
+  char.group.scale.set(0.85, 1.05, 0.85);
+  char.bodyMesh.rotation.x = 0.35;
+  char.headMesh.rotation.x = -0.2;
+  char.armL.rotation.x = -0.5;
+  char.armR.rotation.x = -0.6;
+  return char;
+}
+
+/** Screamer zombie — pale, mouth wide open, alerts others */
+export function createScreamer(): CharacterMesh {
+  const char = createCharacter(Mat.screamerBody(), Mat.screamerHead(), Mat.screamerBody());
+  char.headMesh.scale.set(1.3, 1.3, 1.3);
+  char.bodyMesh.rotation.x = -0.1;
+  // Add a "mouth" mesh
+  const mouthGeo = new THREE.BoxGeometry(0.15, 0.1, 0.08);
+  const mouthMat = new THREE.MeshStandardMaterial({ color: 0x330000, emissive: 0x220000 });
+  const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+  mouth.position.set(0, HEAD_Y - 0.05, 0.15);
+  char.group.add(mouth);
+  return char;
+}
+
+/** Exploder zombie — bloated, glowing, explodes on death */
+export function createExploder(): CharacterMesh {
+  const char = createCharacter(Mat.exploderBody(), Mat.exploderHead(), Mat.exploderBody());
+  char.group.scale.set(1.4, 1.1, 1.4);
+  char.bodyMesh.scale.set(1.3, 1.2, 1.3);
+  return char;
+}
+
 export function createNPC(): CharacterMesh {
   const fromModel = createFromGLTF('npc');
   if (fromModel) return fromModel;

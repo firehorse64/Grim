@@ -16,6 +16,7 @@ export interface InputState3D {
   speedUp: boolean;
   speedDown: boolean;
   sprint: boolean;
+  crouch: boolean;
   mouseX: number;     // screen space
   mouseY: number;
   mouseDown: boolean;
@@ -102,6 +103,7 @@ export class InputManager3D {
     s.speedUp = this.keysJustDown.has('Equal');
     s.speedDown = this.keysJustDown.has('Minus');
     s.sprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    s.crouch = this.keys.has('ControlLeft') || this.keys.has('ControlRight') || this.keys.has('KeyC');
 
     // Keyboard camera rotation (hold comma/period or arrow keys)
     s.cameraRotateLeft = this.keys.has('Comma') || this.keys.has('BracketLeft') || this.keys.has('ArrowLeft');
@@ -129,7 +131,7 @@ export class InputManager3D {
     return {
       moveX: 0, moveZ: 0, interact: false, attack: false,
       openInventory: false, pause: false, openMap: false, openTrainMap: false,
-      switchWeapon: false, speedUp: false, speedDown: false, sprint: false,
+      switchWeapon: false, speedUp: false, speedDown: false, sprint: false, crouch: false,
       mouseX: 0, mouseY: 0, mouseDown: false, mouseJustPressed: false,
       rightMouseDown: false, cameraDeltaX: 0, cameraDeltaY: 0,
       cameraRotateLeft: false, cameraRotateRight: false,

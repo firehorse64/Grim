@@ -108,6 +108,49 @@ export const DAY_PHASE_DURATION_MS = 150000;  // 2.5 min per phase
 export const NIGHT_ZOMBIE_MULTIPLIER = 2.0;
 export const NIGHT_AMBIENT_ALPHA = 0.35;
 
+// Zombie variants
+export const CRAWLER_HP = 30;
+export const CRAWLER_SPEED = 12;
+export const CRAWLER_DAMAGE = 3;
+export const RUNNER_HP = 35;
+export const RUNNER_SPEED = 70;
+export const RUNNER_DAMAGE = 8;
+export const SCREAMER_HP = 25;
+export const SCREAMER_SPEED = 15;
+export const SCREAMER_DAMAGE = 2;
+export const SCREAMER_ALERT_RANGE = 20;
+export const EXPLODER_HP = 40;
+export const EXPLODER_SPEED = 14;
+export const EXPLODER_DAMAGE = 25;
+export const EXPLODER_RADIUS = 4;
+
+// Horde night
+export const HORDE_CYCLE_DAYS = 7;
+export const HORDE_DURATION_MS = 90000;     // 1.5 minutes of horde
+export const HORDE_SPAWN_INTERVAL = 400;    // rapid spawning during horde
+export const HORDE_MAX_ZOMBIES = 80;
+export const HORDE_WARNING_TIME_MS = 15000; // 15s warning before horde
+
+// Stealth
+export const CROUCH_SPEED_MULT = 0.4;
+export const CROUCH_NOISE_MULT = 0.3;
+export const STANDING_NOISE_RADIUS = 8;
+export const SPRINT_NOISE_RADIUS = 16;
+export const GUNSHOT_NOISE_RADIUS = 40;
+export const MELEE_NOISE_RADIUS = 6;
+export const STEALTH_KILL_MULT = 3.0; // damage multiplier from behind
+
+// Weapon durability
+export const RIFLE_MAX_DURABILITY = 100;
+export const MELEE_MAX_DURABILITY = 80;
+export const RIFLE_DURABILITY_COST = 2;   // per shot
+export const MELEE_DURABILITY_COST = 3;   // per swing
+export const REPAIR_WEAPON_COST = 2;      // materials to repair
+
+// Barricading
+export const BARRICADE_MAX_HP = 80;
+export const BARRICADE_BUILD_COST = 2;     // materials per barricade
+
 // Exploration
 export const BUILDING_COUNT_MIN = 2;
 export const BUILDING_COUNT_MAX = 4;

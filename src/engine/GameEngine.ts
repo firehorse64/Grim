@@ -9,6 +9,7 @@ import { TrainRenderer, CAR_WIDTH, CAR_LENGTH, CONNECTOR_LENGTH, FLOOR_Y } from 
 import { EnvironmentRenderer } from '../rendering/EnvironmentRenderer';
 import {
   CharacterMesh, RagdollPart, createPlayer, createZombie, createNPC,
+  createCrawler, createRunner, createScreamer, createExploder,
   animateWalk, animateMeleeSwing, animateZombieLurch, animateZombieAttack,
   animateWindowCrawl, createRagdoll, createBullet, createPickupMesh,
 } from '../rendering/CharacterRenderer';
@@ -37,12 +38,22 @@ import {
   REPAIR_AMOUNT, REPAIR_MATERIAL_COST, LOW_STAT_THRESHOLD,
   HUNGER_MAX, ENERGY_MAX, ZOMBIE_WINDOW_DAMAGE, WINDOW_MAX_HP,
   ZOMBIE_SPAWN_RADIUS, ZOMBIE_MAX_COUNT,
+  CRAWLER_HP, CRAWLER_SPEED, CRAWLER_DAMAGE,
+  RUNNER_HP, RUNNER_SPEED, RUNNER_DAMAGE,
+  SCREAMER_HP, SCREAMER_SPEED, SCREAMER_DAMAGE, SCREAMER_ALERT_RANGE,
+  EXPLODER_HP, EXPLODER_SPEED, EXPLODER_DAMAGE, EXPLODER_RADIUS,
+  HORDE_CYCLE_DAYS, HORDE_DURATION_MS, HORDE_SPAWN_INTERVAL, HORDE_MAX_ZOMBIES, HORDE_WARNING_TIME_MS,
+  CROUCH_SPEED_MULT, STANDING_NOISE_RADIUS, SPRINT_NOISE_RADIUS,
+  GUNSHOT_NOISE_RADIUS, MELEE_NOISE_RADIUS, STEALTH_KILL_MULT,
+  RIFLE_MAX_DURABILITY, MELEE_MAX_DURABILITY, RIFLE_DURABILITY_COST, MELEE_DURABILITY_COST,
+  BARRICADE_MAX_HP, BARRICADE_BUILD_COST,
 } from '../data/BalanceConstants';
 import { SurvivalState, WeaponType, InventoryItem } from '../types/GameTypes';
 
 type GamePhase = 'MENU' | 'PLAYING' | 'PAUSED' | 'GAMEOVER';
 type GameMode = 'TRAVELING' | 'STOPPED' | 'EXPLORING';
 type TimeOfDay = 'DAWN' | 'DAY' | 'DUSK' | 'NIGHT';
+type ZombieType = 'normal' | 'crawler' | 'runner' | 'screamer' | 'exploder';
 
 const FLOOR_SURFACE_Y = FLOOR_Y + 0.05;
 const GROUND_Y = 0;
@@ -55,6 +66,8 @@ interface ZombieEntity {
   ambient: boolean;
   velocity: THREE.Vector3;
   insideTrain: boolean;
+  type: ZombieType;
+  hasScreamed: boolean;
 }
 
 interface Bullet {
@@ -89,6 +102,7 @@ export class GameEngine {
   private playerFacing = new THREE.Vector3(0, 0, 1);
   private playerSpeedMult = 1.0;
   private isSprinting = false;
+  private isCrouching = false;
 
   private phase: GamePhase = 'MENU';
   private mode: GameMode = 'STOPPED';
@@ -118,8 +132,24 @@ export class GameEngine {
   private lastMeleeTime = 0;
   private bullets: Bullet[] = [];
 
+  // Weapon durability
+  private rifleDurability = RIFLE_MAX_DURABILITY;
+  private meleeDurability = MELEE_MAX_DURABILITY;
+
   private zombies: ZombieEntity[] = [];
   private zombieSpawnTimer = 0;
+
+  // Horde night system
+  private dayCount = 1;
+  private dayPhaseCount = 0; // counts phase transitions to track days
+  private hordeActive = false;
+  private hordeTimer = 0;
+  private hordeWarningShown = false;
+  private hordeSpawnTimer = 0;
+
+  // Noise system for stealth
+  private noiseLevel = 0;
+  private noiseDecayTimer = 0;
 
   private ragdollParts: RagdollPart[] = [];
 
@@ -252,8 +282,18 @@ export class GameEngine {
     this.timeOfDay = 'DAY';
     this.dayTimer = 0;
     this.currentWeapon = WeaponType.RIFLE;
+    this.rifleDurability = RIFLE_MAX_DURABILITY;
+    this.meleeDurability = MELEE_MAX_DURABILITY;
     this.explorationActive = false;
     this.cameraOrbitAngle = Math.PI / 2;
+    this.dayCount = 1;
+    this.dayPhaseCount = 0;
+    this.hordeActive = false;
+    this.hordeTimer = 0;
+    this.hordeWarningShown = false;
+    this.hordeSpawnTimer = 0;
+    this.noiseLevel = 0;
+    this.isCrouching = false;
     this.interiorLightsOn = true;
     this.trainRenderer.setInteriorLights(true);
 
@@ -375,11 +415,15 @@ export class GameEngine {
     if (inp.cameraRotateLeft) this.cameraOrbitAngle -= 2.0 * dt;
     if (inp.cameraRotateRight) this.cameraOrbitAngle += 2.0 * dt;
 
-    // Sprint
-    this.isSprinting = inp.sprint && (inp.moveX !== 0 || inp.moveZ !== 0);
+    // Sprint & Crouch
+    this.isCrouching = inp.crouch;
+    this.isSprinting = inp.sprint && !this.isCrouching && (inp.moveX !== 0 || inp.moveZ !== 0);
 
     this.survivalManager.update(dtMs);
     this.playerSpeedMult = this.survivalManager.getSpeedMultiplier();
+
+    // Noise system
+    this.updateNoise(dt, inp);
 
     this.updatePlayer(dt, inp);
 
@@ -421,8 +465,13 @@ export class GameEngine {
   // ===== PLAYER =====
 
   private updatePlayer(dt: number, inp: InputManager3D['state']): void {
-    const sprintMult = this.isSprinting ? 1.8 : 1.0;
+    const sprintMult = this.isSprinting ? 1.8 : this.isCrouching ? CROUCH_SPEED_MULT : 1.0;
     const speed = PLAYER_SPEED * this.playerSpeedMult * sprintMult * dt * 0.02;
+
+    // Visual crouch: lower the player model
+    const targetCrouchY = this.isCrouching ? 0.7 : 1.0;
+    const currentScale = this.playerMesh.group.scale.y;
+    this.playerMesh.group.scale.y += (targetCrouchY - currentScale) * 8 * dt;
 
     // Sprint drains energy
     if (this.isSprinting) {
@@ -477,14 +526,20 @@ export class GameEngine {
     if (this.currentWeapon === WeaponType.RIFLE) {
       if (now - this.lastFireTime < RIFLE_FIRE_RATE_MS) return;
       if (!this.inventory.useAmmo()) { this.hud.showFloatingText('No ammo!'); return; }
+      if (this.rifleDurability <= 0) { this.hud.showFloatingText('Rifle broken! Repair at workbench'); return; }
       this.lastFireTime = now;
+      this.rifleDurability = Math.max(0, this.rifleDurability - RIFLE_DURABILITY_COST);
       this.fireRifle(this.playerFacing.clone());
       this.audio.playShot();
+      this.makeNoise(GUNSHOT_NOISE_RADIUS);
     } else {
       if (now - this.lastMeleeTime < MELEE_COOLDOWN_MS) return;
+      if (this.meleeDurability <= 0) { this.hud.showFloatingText('Weapon broken! Repair at workbench'); return; }
       this.lastMeleeTime = now;
+      this.meleeDurability = Math.max(0, this.meleeDurability - MELEE_DURABILITY_COST);
       this.meleeAttack();
       this.audio.playMelee();
+      this.makeNoise(MELEE_NOISE_RADIUS);
     }
   }
 
@@ -508,14 +563,20 @@ export class GameEngine {
     if (this.currentWeapon === WeaponType.RIFLE) {
       if (now - this.lastFireTime < RIFLE_FIRE_RATE_MS) return;
       if (!this.inventory.useAmmo()) return;
+      if (this.rifleDurability <= 0) { this.hud.showFloatingText('Rifle broken!'); return; }
       this.lastFireTime = now;
+      this.rifleDurability = Math.max(0, this.rifleDurability - RIFLE_DURABILITY_COST);
       this.fireRifle(dir);
       this.audio.playShot();
+      this.makeNoise(GUNSHOT_NOISE_RADIUS);
     } else {
       if (now - this.lastMeleeTime < MELEE_COOLDOWN_MS) return;
+      if (this.meleeDurability <= 0) { this.hud.showFloatingText('Weapon broken!'); return; }
       this.lastMeleeTime = now;
+      this.meleeDurability = Math.max(0, this.meleeDurability - MELEE_DURABILITY_COST);
       this.meleeAttack();
       this.audio.playMelee();
+      this.makeNoise(MELEE_NOISE_RADIUS);
     }
   }
 
@@ -547,11 +608,19 @@ export class GameEngine {
             if (!nearWin) continue; // blocked by wall
           }
 
-          z.hp -= MELEE_DAMAGE;
+          // Stealth kill: hitting from behind while crouching does bonus damage
+          const isBehind = z.mesh.group.rotation.y !== undefined &&
+            this.playerFacing.dot(new THREE.Vector3(
+              Math.sin(z.mesh.group.rotation.y), 0, Math.cos(z.mesh.group.rotation.y),
+            )) > 0.5;
+          const stealthMult = this.isCrouching && isBehind ? STEALTH_KILL_MULT : 1.0;
+          const meleeDmg = Math.round(MELEE_DAMAGE * stealthMult);
+          z.hp -= meleeDmg;
           const knock = toZ.clone().multiplyScalar(3);
           knock.y = 1;
           z.velocity.add(knock);
-          this.hud.showFloatingText(`-${MELEE_DAMAGE}`);
+          const stealthText = stealthMult > 1 ? ' STEALTH!' : '';
+          this.hud.showFloatingText(`-${meleeDmg}${stealthText}`);
           if (z.hp <= 0) this.killZombie(z, toZ.multiplyScalar(5));
           this.audio.playHit();
         }
@@ -657,6 +726,23 @@ export class GameEngine {
           this.hud.showFloatingText('Window Repaired!');
         }
       }
+
+      // Barricade unbarricaded windows
+      if (!prompted) {
+        const barricadeWin = this.trainRenderer.getNearestUnbarricadedWindow(px, pz, range * 1.5);
+        if (barricadeWin && !barricadeWin.broken) {
+          const hasMats = this.inventory.hasItem('scrap-metal', BARRICADE_BUILD_COST);
+          if (hasMats) {
+            this.hud.showInteractPrompt(`[E] Barricade Window (${BARRICADE_BUILD_COST} Scrap)`);
+            prompted = true;
+            if (inp.interact) {
+              this.inventory.removeItem('scrap-metal', BARRICADE_BUILD_COST);
+              this.trainRenderer.barricadeWindow(barricadeWin, BARRICADE_MAX_HP);
+              this.hud.showFloatingText('Window Barricaded!');
+            }
+          }
+        }
+      }
     }
 
     for (const npc of this.npcs) {
@@ -752,7 +838,17 @@ export class GameEngine {
         }
         break;
       case 'WORKBENCH':
-        if (this.engineHp < 70 && this.inventory.hasItem('scrap-metal', REPAIR_MATERIAL_COST)) {
+        // Priority: repair broken weapons > repair engine > refuel
+        if ((this.rifleDurability < 50 || this.meleeDurability < 50) && this.inventory.hasItem('scrap-metal', 1)) {
+          this.inventory.removeItem('scrap-metal', 1);
+          if (this.rifleDurability <= this.meleeDurability) {
+            this.rifleDurability = Math.min(RIFLE_MAX_DURABILITY, this.rifleDurability + 40);
+            this.hud.showFloatingText('Rifle repaired!');
+          } else {
+            this.meleeDurability = Math.min(MELEE_MAX_DURABILITY, this.meleeDurability + 40);
+            this.hud.showFloatingText('Melee weapon repaired!');
+          }
+        } else if (this.engineHp < 70 && this.inventory.hasItem('scrap-metal', REPAIR_MATERIAL_COST)) {
           this.inventory.removeItem('scrap-metal', REPAIR_MATERIAL_COST);
           this.engineHp = Math.min(100, this.engineHp + REPAIR_AMOUNT);
           this.hud.showFloatingText('Engine repaired!');
@@ -846,17 +942,23 @@ export class GameEngine {
 
   private updateZombies(dt: number, dtMs: number): void {
     const spawnMult = this.timeOfDay === 'NIGHT' ? NIGHT_ZOMBIE_MULTIPLIER : 1;
-    const spawnInterval = AMBIENT_ZOMBIE_SPAWN_INTERVAL / spawnMult;
+    const maxZombies = this.hordeActive ? HORDE_MAX_ZOMBIES : ZOMBIE_MAX_COUNT;
+    const spawnInterval = this.hordeActive ? HORDE_SPAWN_INTERVAL : AMBIENT_ZOMBIE_SPAWN_INTERVAL / spawnMult;
 
     this.zombieSpawnTimer += dtMs;
-    if (this.zombieSpawnTimer > spawnInterval && this.zombies.length < ZOMBIE_MAX_COUNT) {
+    if (this.zombieSpawnTimer > spawnInterval && this.zombies.length < maxZombies) {
       this.zombieSpawnTimer = 0;
       this.spawnAmbientZombie();
     }
 
+    // Horde night logic
+    this.updateHorde(dtMs);
+
     const px = this.playerPos.x;
     const pz = this.playerPos.z;
-    const aggroRange = 15; // bigger aggro range
+    // Stealth affects aggro range
+    const baseAggro = 15;
+    const aggroRange = this.isCrouching ? baseAggro * 0.4 : baseAggro;
     const bounds = this.trainRenderer.getBounds();
 
     for (let i = this.zombies.length - 1; i >= 0; i--) {
@@ -881,11 +983,46 @@ export class GameEngine {
       }
 
       const distToPlayer = distance(zPos.x, zPos.z, px, pz);
+      const zombieSpeed = this.getZombieSpeed(z, true);
+      const zombieDmg = this.getZombieDamage(z);
+
+      // Screamer behavior: alert nearby zombies when it sees the player
+      if (z.type === 'screamer' && !z.hasScreamed && distToPlayer < SCREAMER_ALERT_RANGE) {
+        z.hasScreamed = true;
+        this.hud.showFloatingText('SCREAMER!');
+        // Alert all nearby zombies — make them rush toward player
+        for (const other of this.zombies) {
+          if (other === z || !other.alive) continue;
+          const d = distance(zPos.x, zPos.z, other.mesh.group.position.x, other.mesh.group.position.z);
+          if (d < SCREAMER_ALERT_RANGE * 2) {
+            // Push them toward the player
+            const dir = new THREE.Vector3(px - other.mesh.group.position.x, 0, pz - other.mesh.group.position.z).normalize();
+            other.velocity.add(dir.multiplyScalar(3));
+          }
+        }
+        // Spawn 2-4 extra zombies near the screamer
+        const extraCount = 2 + Math.floor(Math.random() * 3);
+        for (let j = 0; j < extraCount && this.zombies.length < maxZombies; j++) {
+          const extraType = Math.random() < 0.6 ? 'normal' as ZombieType : 'runner' as ZombieType;
+          const em = this.createZombieByType(extraType);
+          em.mesh.group.position.set(
+            zPos.x + (Math.random() - 0.5) * 6,
+            GROUND_Y,
+            zPos.z + (Math.random() - 0.5) * 6,
+          );
+          this.scene.add(em.mesh.group);
+          this.zombies.push({
+            mesh: em.mesh, alive: true, hp: em.hp, attackCooldown: ZOMBIE_ATTACK_COOLDOWN_MS,
+            ambient: true, velocity: new THREE.Vector3(), insideTrain: false,
+            type: extraType, hasScreamed: false,
+          });
+        }
+      }
 
       if (z.insideTrain && distToPlayer < aggroRange) {
         // Inside train: chase and attack player directly
         const dir = new THREE.Vector3(px - zPos.x, 0, pz - zPos.z).normalize();
-        const spd = ZOMBIE_CHASE_SPEED * 0.015 * dt;
+        const spd = zombieSpeed * 0.015 * dt;
         zPos.x += dir.x * spd;
         zPos.z += dir.z * spd;
         z.mesh.group.rotation.y = Math.atan2(dir.x, dir.z);
@@ -895,8 +1032,8 @@ export class GameEngine {
           z.attackCooldown -= dtMs;
           if (z.attackCooldown <= 0) {
             z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
-            this.survival.health = Math.max(0, this.survival.health - ZOMBIE_DAMAGE);
-            this.hud.showFloatingText(`-${ZOMBIE_DAMAGE}`);
+            this.survival.health = Math.max(0, this.survival.health - zombieDmg);
+            this.hud.showFloatingText(`-${zombieDmg}`);
             animateZombieAttack(z.mesh);
             if (this.survival.health <= 0) this.gameOver();
           }
@@ -911,7 +1048,7 @@ export class GameEngine {
           const distToWin = dir.length();
           if (distToWin > 0.1) {
             dir.normalize();
-            const spd = ZOMBIE_CHASE_SPEED * 0.015 * dt;
+            const spd = zombieSpeed * 0.015 * dt;
             zPos.x += dir.x * spd;
             zPos.z += dir.z * spd;
             z.mesh.group.rotation.y = Math.atan2(dir.x, dir.z);
@@ -933,8 +1070,8 @@ export class GameEngine {
                 z.attackCooldown -= dtMs;
                 if (z.attackCooldown <= 0) {
                   z.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_MS;
-                  this.survival.health = Math.max(0, this.survival.health - ZOMBIE_DAMAGE);
-                  this.hud.showFloatingText(`-${ZOMBIE_DAMAGE}`);
+                  this.survival.health = Math.max(0, this.survival.health - zombieDmg);
+                  this.hud.showFloatingText(`-${zombieDmg}`);
                   if (this.survival.health <= 0) this.gameOver();
                 }
               }
@@ -953,7 +1090,7 @@ export class GameEngine {
           const trainCenterZ = this.trainRenderer.getCenter();
           const toTrainX = -zPos.x * 0.3;
           const toTrainZ = (trainCenterZ - zPos.z) * 0.1;
-          const wanderSpeed = ZOMBIE_AMBIENT_SPEED * 0.01 * dt;
+          const wanderSpeed = this.getZombieSpeed(z, false) * 0.01 * dt;
           zPos.x += toTrainX * wanderSpeed;
           zPos.z += toTrainZ * wanderSpeed;
           animateZombieLurch(z.mesh, dt);
@@ -1017,22 +1154,73 @@ export class GameEngine {
     // Window interactions are now handled in updateZombies main loop
   }
 
-  private spawnAmbientZombie(): void {
+  private spawnAmbientZombie(forceType?: ZombieType): void {
     const side = Math.random() < 0.5 ? -1 : 1;
     const x = side * (CAR_WIDTH / 2 + 3 + Math.random() * ZOMBIE_SPAWN_RADIUS);
     const trainCenter = this.trainRenderer.getCenter();
     const z = trainCenter + (Math.random() - 0.5) * ZOMBIE_SPAWN_RADIUS * 2;
-    const mesh = createZombie();
+
+    // Pick zombie type
+    const type = forceType ?? this.pickZombieType();
+    const { mesh, hp, speed: _speed } = this.createZombieByType(type);
+
     mesh.group.position.set(x, GROUND_Y, z);
     this.scene.add(mesh.group);
     this.zombies.push({
-      mesh, alive: true, hp: 50, attackCooldown: ZOMBIE_ATTACK_COOLDOWN_MS,
+      mesh, alive: true, hp, attackCooldown: ZOMBIE_ATTACK_COOLDOWN_MS,
       ambient: true, velocity: new THREE.Vector3(), insideTrain: false,
+      type, hasScreamed: false,
     });
+  }
+
+  private pickZombieType(): ZombieType {
+    const r = Math.random();
+    const nightBonus = this.timeOfDay === 'NIGHT' ? 0.1 : 0;
+    if (r < 0.55 - nightBonus) return 'normal';
+    if (r < 0.70) return 'crawler';
+    if (r < 0.85) return 'runner';
+    if (r < 0.93) return 'screamer';
+    return 'exploder';
+  }
+
+  private createZombieByType(type: ZombieType): { mesh: CharacterMesh; hp: number; speed: number } {
+    switch (type) {
+      case 'crawler': return { mesh: createCrawler(), hp: CRAWLER_HP, speed: CRAWLER_SPEED };
+      case 'runner': return { mesh: createRunner(), hp: RUNNER_HP, speed: RUNNER_SPEED };
+      case 'screamer': return { mesh: createScreamer(), hp: SCREAMER_HP, speed: SCREAMER_SPEED };
+      case 'exploder': return { mesh: createExploder(), hp: EXPLODER_HP, speed: EXPLODER_SPEED };
+      default: return { mesh: createZombie(), hp: 50, speed: ZOMBIE_AMBIENT_SPEED };
+    }
+  }
+
+  private getZombieSpeed(z: ZombieEntity, chasing: boolean): number {
+    switch (z.type) {
+      case 'crawler': return chasing ? CRAWLER_SPEED * 1.5 : CRAWLER_SPEED;
+      case 'runner': return chasing ? RUNNER_SPEED : RUNNER_SPEED * 0.7;
+      case 'screamer': return chasing ? SCREAMER_SPEED : SCREAMER_SPEED;
+      case 'exploder': return chasing ? EXPLODER_SPEED * 1.2 : EXPLODER_SPEED;
+      default: return chasing ? ZOMBIE_CHASE_SPEED : ZOMBIE_AMBIENT_SPEED;
+    }
+  }
+
+  private getZombieDamage(z: ZombieEntity): number {
+    switch (z.type) {
+      case 'crawler': return CRAWLER_DAMAGE;
+      case 'runner': return RUNNER_DAMAGE;
+      case 'screamer': return SCREAMER_DAMAGE;
+      case 'exploder': return EXPLODER_DAMAGE;
+      default: return ZOMBIE_DAMAGE;
+    }
   }
 
   private killZombie(z: ZombieEntity, force: THREE.Vector3): void {
     z.alive = false;
+
+    // Exploder: deal AoE damage on death
+    if (z.type === 'exploder') {
+      this.handleExploderDeath(z);
+    }
+
     const parts = createRagdoll(z.mesh, force);
     for (const p of parts) {
       this.scene.add(p.mesh);
@@ -1041,6 +1229,63 @@ export class GameEngine {
     this.scene.remove(z.mesh.group);
     const idx = this.zombies.indexOf(z);
     if (idx >= 0) this.zombies.splice(idx, 1);
+  }
+
+  private handleExploderDeath(z: ZombieEntity): void {
+    const zPos = z.mesh.group.position;
+    this.hud.showFloatingText('BOOM!');
+
+    // Create explosion visual
+    const explosionGeo = new THREE.SphereGeometry(EXPLODER_RADIUS, 12, 8);
+    const explosionMat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.7 });
+    const explosion = new THREE.Mesh(explosionGeo, explosionMat);
+    explosion.position.copy(zPos);
+    this.scene.add(explosion);
+
+    // Fade out the explosion
+    const startTime = performance.now();
+    const fadeExplosion = () => {
+      const t = (performance.now() - startTime) / 500;
+      if (t >= 1) { this.scene.remove(explosion); return; }
+      explosionMat.opacity = 0.7 * (1 - t);
+      explosion.scale.setScalar(1 + t * 0.5);
+      requestAnimationFrame(fadeExplosion);
+    };
+    requestAnimationFrame(fadeExplosion);
+
+    // Damage player if in range
+    const distToPlayer = distance(zPos.x, zPos.z, this.playerPos.x, this.playerPos.z);
+    if (distToPlayer < EXPLODER_RADIUS) {
+      const dmgFactor = 1 - distToPlayer / EXPLODER_RADIUS;
+      const dmg = Math.round(EXPLODER_DAMAGE * dmgFactor);
+      this.survival.health = Math.max(0, this.survival.health - dmg);
+      this.hud.showFloatingText(`-${dmg} (explosion)`);
+      if (this.survival.health <= 0) this.gameOver();
+    }
+
+    // Damage other zombies in range
+    for (const other of this.zombies) {
+      if (other === z || !other.alive) continue;
+      const d = distance(zPos.x, zPos.z, other.mesh.group.position.x, other.mesh.group.position.z);
+      if (d < EXPLODER_RADIUS) {
+        const dmg = Math.round(EXPLODER_DAMAGE * (1 - d / EXPLODER_RADIUS));
+        other.hp -= dmg;
+        const blastDir = new THREE.Vector3(
+          other.mesh.group.position.x - zPos.x, 2,
+          other.mesh.group.position.z - zPos.z,
+        ).normalize().multiplyScalar(5);
+        other.velocity.add(blastDir);
+        if (other.hp <= 0) this.killZombie(other, blastDir);
+      }
+    }
+
+    // Damage windows in range
+    for (const win of this.trainRenderer.windows) {
+      const d = distance(zPos.x, zPos.z, win.worldX, win.worldZ);
+      if (d < EXPLODER_RADIUS && !win.broken) {
+        this.trainRenderer.damageWindow(win, 20);
+      }
+    }
   }
 
   /** Check if the player is near a specific window (from the inside) */
@@ -1203,6 +1448,91 @@ export class GameEngine {
       this.envRenderer.setSkyPhase(this.timeOfDay);
       this.updateLighting();
       this.hud.showFloatingText(this.timeOfDay);
+
+      // Track day count (a full cycle = 4 phases)
+      this.dayPhaseCount++;
+      if (this.dayPhaseCount >= 4) {
+        this.dayPhaseCount = 0;
+        this.dayCount++;
+        this.hud.showFloatingText(`Day ${this.dayCount}`);
+
+        // Trigger horde night every HORDE_CYCLE_DAYS
+        if (this.dayCount % HORDE_CYCLE_DAYS === 0) {
+          this.startHorde();
+        }
+      }
+    }
+  }
+
+  private startHorde(): void {
+    this.hordeActive = true;
+    this.hordeTimer = HORDE_DURATION_MS;
+    this.hordeSpawnTimer = 0;
+    this.hud.showFloatingText('HORDE NIGHT! Survive the onslaught!');
+
+    // Make it night during horde
+    this.timeOfDay = 'NIGHT';
+    this.envRenderer.setSkyPhase('NIGHT');
+    this.updateLighting();
+    // Extra dramatic lighting
+    this.ambientLight.intensity = 0.1;
+    this.directionalLight.intensity = 0.2;
+    this.directionalLight.color.setHex(0x443355);
+    this.scene.fog = new THREE.FogExp2(0x110022, 0.02);
+  }
+
+  private updateHorde(dtMs: number): void {
+    if (!this.hordeActive) {
+      // Check for upcoming horde warning
+      if (this.dayCount % HORDE_CYCLE_DAYS === HORDE_CYCLE_DAYS - 1 &&
+          this.timeOfDay === 'DUSK' && !this.hordeWarningShown) {
+        this.hordeWarningShown = true;
+        this.hud.showFloatingText('The horde is coming tonight...');
+      }
+      if (this.timeOfDay === 'DAY') this.hordeWarningShown = false;
+      return;
+    }
+
+    this.hordeTimer -= dtMs;
+    if (this.hordeTimer <= 0) {
+      this.hordeActive = false;
+      this.hud.showFloatingText('The horde has passed. You survived!');
+      this.updateLighting(); // restore normal lighting
+      return;
+    }
+  }
+
+  // ===== STEALTH / NOISE =====
+
+  private updateNoise(dt: number, inp: InputManager3D['state']): void {
+    // Decay noise over time
+    this.noiseLevel = Math.max(0, this.noiseLevel - 5 * dt);
+
+    // Moving generates noise based on stance
+    if (inp.moveX !== 0 || inp.moveZ !== 0) {
+      if (this.isSprinting) {
+        this.noiseLevel = Math.max(this.noiseLevel, SPRINT_NOISE_RADIUS);
+      } else if (this.isCrouching) {
+        this.noiseLevel = Math.max(this.noiseLevel, STANDING_NOISE_RADIUS * 0.3);
+      } else {
+        this.noiseLevel = Math.max(this.noiseLevel, STANDING_NOISE_RADIUS);
+      }
+    }
+  }
+
+  private makeNoise(radius: number): void {
+    this.noiseLevel = Math.max(this.noiseLevel, radius);
+    // Alert zombies in radius
+    const px = this.playerPos.x;
+    const pz = this.playerPos.z;
+    for (const z of this.zombies) {
+      if (!z.alive) continue;
+      const d = distance(z.mesh.group.position.x, z.mesh.group.position.z, px, pz);
+      if (d < radius) {
+        // Push zombie toward noise source
+        const dir = new THREE.Vector3(px - z.mesh.group.position.x, 0, pz - z.mesh.group.position.z).normalize();
+        z.velocity.add(dir.multiplyScalar(2));
+      }
     }
   }
 
@@ -1435,6 +1765,11 @@ export class GameEngine {
       currentLocationId: this.currentLocationId,
       destinationId: this.destinationId,
       isSprinting: this.isSprinting,
+      isCrouching: this.isCrouching,
+      rifleDurability: this.rifleDurability,
+      meleeDurability: this.meleeDurability,
+      dayCount: this.dayCount,
+      hordeActive: this.hordeActive,
     };
     EventBus.emit('hud:update', data);
   }

@@ -54,6 +54,15 @@ export const playerLegs = () => mat('playerLegs', 0x445566);
 
 export const zombieBody = () => mat('zombieBody', 0x556644);
 export const zombieHead = () => mat('zombieHead', 0x778866);
+// Zombie variants
+export const crawlerBody = () => mat('crawlerBody', 0x445533);
+export const crawlerHead = () => mat('crawlerHead', 0x667755);
+export const runnerBody = () => mat('runnerBody', 0x664444);
+export const runnerHead = () => mat('runnerHead', 0x886666);
+export const screamerBody = () => mat('screamerBody', 0x888877);
+export const screamerHead = () => mat('screamerHead', 0xaaaaaa);
+export const exploderBody = () => mat('exploderBody', 0x447744, { emissive: 0x224422 });
+export const exploderHead = () => mat('exploderHead', 0x66aa66, { emissive: 0x336633 });
 
 export const npcBody = () => mat('npcBody', 0x4488aa);
 export const npcHead = () => mat('npcHead', 0xddbb88);

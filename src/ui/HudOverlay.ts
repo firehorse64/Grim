@@ -26,6 +26,11 @@ export interface HudData {
   currentLocationId: string;
   destinationId: string | null;
   isSprinting: boolean;
+  isCrouching: boolean;
+  rifleDurability: number;
+  meleeDurability: number;
+  dayCount: number;
+  hordeActive: boolean;
 }
 
 export class HudOverlay {
@@ -94,7 +99,7 @@ export class HudOverlay {
       position:fixed; bottom:8px; left:50%; transform:translateX(-50%);
       font-size:10px; color:#556; pointer-events:none;
     `;
-    this.controlsText.textContent = 'WASD: Move | Shift: Sprint | Click: Fire | E: Interact | TAB: Inventory | M: Map | T: Train | Q: Weapon | ,/.: Camera | ESC: Pause';
+    this.controlsText.textContent = 'WASD: Move | Shift: Sprint | Ctrl/C: Crouch | Click: Fire | E: Interact | TAB: Inventory | M: Map | T: Train | Q: Weapon | ,/.: Camera | ESC: Pause';
     this.container.appendChild(this.controlsText);
 
     // Interact prompt
@@ -175,8 +180,12 @@ export class HudOverlay {
     this.fuelBar.style.background = data.fuel < 20 ? '#f44' : '#cc4';
 
     // Info text beneath bars
-    const sprintText = data.isSprinting ? ' | SPRINTING' : '';
-    this.infoText.textContent = `${data.weapon} | Ammo: ${data.ammo} | Crew: ${data.npcCount} | ${data.timeOfDay}${sprintText}`;
+    const stanceText = data.isSprinting ? ' | SPRINTING' : data.isCrouching ? ' | CROUCHING' : '';
+    const durability = data.weapon === 'Rifle' ? data.rifleDurability : data.meleeDurability;
+    const durPct = Math.round(durability);
+    const durColor = durability < 20 ? '#f44' : durability < 50 ? '#cc4' : '#8c8';
+    const hordeText = data.hordeActive ? ' | <span style="color:#f44;font-weight:bold">HORDE!</span>' : '';
+    this.infoText.innerHTML = `${data.weapon} (${durPct}%) | Ammo: ${data.ammo} | Day ${data.dayCount} | ${data.timeOfDay}${stanceText}${hordeText}`;
 
     // Status panel (top-right)
     let statusLines = '';

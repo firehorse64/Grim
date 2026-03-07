@@ -48,6 +48,9 @@ export interface WindowState3D {
   side: 'left' | 'right';
   worldX: number;
   worldZ: number;
+  barricaded: boolean;
+  barricadeHp: number;
+  barricadeMesh: THREE.Mesh | null;
 }
 
 export class TrainRenderer {
@@ -142,6 +145,7 @@ export class TrainRenderer {
         mesh: lwMesh, glowMesh: lwGlow,
         hp: WINDOW_MAX_HP, maxHp: WINDOW_MAX_HP, broken: false,
         carIndex, side: 'left', worldX: halfW, worldZ: wz,
+        barricaded: false, barricadeHp: 0, barricadeMesh: null,
       });
 
       // Right window
@@ -154,6 +158,7 @@ export class TrainRenderer {
         mesh: rwMesh, glowMesh: rwGlow,
         hp: WINDOW_MAX_HP, maxHp: WINDOW_MAX_HP, broken: false,
         carIndex, side: 'right', worldX: -halfW, worldZ: wz,
+        barricaded: false, barricadeHp: 0, barricadeMesh: null,
       });
     }
 
@@ -548,6 +553,20 @@ export class TrainRenderer {
   // --- Window damage system ---
 
   public damageWindow(win: WindowState3D, amount: number): boolean {
+    // Barricade absorbs damage first
+    if (win.barricaded && win.barricadeHp > 0) {
+      win.barricadeHp -= amount;
+      if (win.barricadeHp <= 0) {
+        win.barricaded = false;
+        win.barricadeHp = 0;
+        if (win.barricadeMesh) {
+          win.barricadeMesh.parent?.remove(win.barricadeMesh);
+          win.barricadeMesh = null;
+        }
+      }
+      return false;
+    }
+
     if (win.broken) return false;
     win.hp = Math.max(0, win.hp - amount);
     if (win.hp <= 0) {
@@ -568,6 +587,48 @@ export class TrainRenderer {
     win.mesh.material = Mat.trainWindow();
     win.mesh.scale.set(1, 1, 1);
     if (win.glowMesh) win.glowMesh.visible = true;
+    // Remove barricade on full repair
+    win.barricaded = false;
+    win.barricadeHp = 0;
+    if (win.barricadeMesh) {
+      win.barricadeMesh.parent?.remove(win.barricadeMesh);
+      win.barricadeMesh = null;
+    }
+  }
+
+  public barricadeWindow(win: WindowState3D, barricadeHp: number): void {
+    if (win.barricaded) return;
+    win.barricaded = true;
+    win.barricadeHp = barricadeHp;
+    // Create visual barricade: wooden planks over the window
+    const plankGeo = new THREE.BoxGeometry(0.6, 0.08, 0.04);
+    const plankMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.9 });
+    const barricadeGroup = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), new THREE.MeshBasicMaterial({ visible: false }));
+    for (let i = 0; i < 3; i++) {
+      const plank = new THREE.Mesh(plankGeo, plankMat);
+      plank.position.set(0, -0.15 + i * 0.15, 0);
+      plank.rotation.z = (Math.random() - 0.5) * 0.1;
+      plank.castShadow = true;
+      barricadeGroup.add(plank);
+    }
+    // Position at window
+    const offsetX = win.side === 'left' ? -0.08 : 0.08;
+    barricadeGroup.position.set(win.worldX + offsetX, FLOOR_Y + 0.8, win.worldZ);
+    win.barricadeMesh = barricadeGroup;
+    this.group.add(barricadeGroup);
+  }
+
+  public getNearestUnbarricadedWindow(x: number, z: number, maxDist: number): WindowState3D | null {
+    let nearest: WindowState3D | null = null;
+    let bestDist = maxDist;
+    for (const w of this.windows) {
+      if (w.barricaded) continue;
+      const dx = x - w.worldX;
+      const dz = z - w.worldZ;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < bestDist) { bestDist = dist; nearest = w; }
+    }
+    return nearest;
   }
 
   public getNearestWindow(x: number, z: number, maxDist: number): WindowState3D | null {
